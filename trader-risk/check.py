@@ -45,6 +45,7 @@ DEFAULTS = {
     "budget": None, "cash_buffer_pct": 10, "max_position_pct": 25, "max_order_usd": 2000,
     "min_order_usd": 5, "max_orders_per_day": 10, "paper": True, "blocked": [],
     "allow_options": False, "allow_margin": False, "allow_short": False,
+    "max_price_age_hours": 72,
 }
 ALPACA_FIELDS = ("symbol", "side", "qty", "notional", "type", "time_in_force", "limit_price",
                  "stop_price", "trail_price", "trail_percent", "extended_hours", "client_order_id",
@@ -91,6 +92,17 @@ def _f(x):
     return v if math.isfinite(v) else None
 
 
+def _parse_time(value):
+    """ISO 8601 ("...Z" or offset) to an aware UTC datetime, or None."""
+    try:
+        d = datetime.datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=datetime.timezone.utc)
+    return d.astimezone(datetime.timezone.utc)
+
+
 def money(x):
     return "$" + "{:,.2f}".format(float(x)).replace(".00", "")
 
@@ -135,12 +147,15 @@ def placed_today(state, today):
     return out
 
 
-def check(orders, cfg, portfolio=None, prices=None, state=None, today=None):
+def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, price_times=None, now=None):
     """Pure function. Returns {"results": [...], "pass": n, "block": n, "warnings": [...]}."""
     c = dict(DEFAULTS)
     c.update(cfg or {})
     prices = {str(k).upper(): float(v) for k, v in (prices or {}).items() if _f(v)}
     today = today or datetime.date.today().isoformat()
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    price_times = price_times or {}
+    max_age = float(c.get("max_price_age_hours") or 0)
     acct, top_warn = account(c, portfolio, prices)
     blocked = {str(b).upper() for b in c.get("blocked") or []}
     done_today = placed_today(state, today)
@@ -217,8 +232,20 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None):
             ref = _f(o.get("limit_price"))
         elif typ == "stop":
             ref = _f(o.get("stop_price"))
+        price_used = False
         if ref is None:
             ref = prices.get(sym)
+            price_used = ref is not None and notional is None  # only orders SIZED from a price need it fresh
+        if price_used and max_age:
+            stamp = _parse_time(price_times.get(sym))
+            if stamp is None:
+                reasons.append("price: no timestamp for the %s price, so its age is unknown; refresh it "
+                               "(trader-alerts: alerts.py quote %s --write)" % (sym, sym))
+            else:
+                age_h = (now - stamp).total_seconds() / 3600.0
+                if age_h > max_age:
+                    reasons.append("price: the %s price is %.0f hours old (max %s); refresh it"
+                                   % (sym, age_h, _pct(max_age)))
         if notional is not None and _f(notional):
             value = _f(notional)
         elif qty is not None and _f(qty):
@@ -370,7 +397,9 @@ def main(argv=None):
         pdoc = read_json(a.prices, "prices", required=False) or {}
         prices = pdoc.get("prices", pdoc) if isinstance(pdoc, dict) else {}
         state = read_json(a.state, "broker state", required=False)
-        res = check(orders, cfg, portfolio, prices, state, a.today)
+        detail = pdoc.get("detail") if isinstance(pdoc.get("detail"), dict) else {}
+        times = {str(t).upper(): (detail.get(t) or {}).get("fetched_at") or pdoc.get("as_of") for t in prices}
+        res = check(orders, cfg, portfolio, prices, state, a.today, price_times=times)
         if pdoc.get("as_of"):
             res["prices_as_of"] = pdoc["as_of"]
         if not a.no_write:

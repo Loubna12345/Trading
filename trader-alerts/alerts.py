@@ -277,10 +277,15 @@ def write_prices(path, quotes, now_utc, source):
             old = {}
     prices = dict(old.get("prices", {}))
     detail = dict(old.get("detail", {}))
+    stamp = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
     for s, q in quotes.items():
         prices[s] = q["price"]
-        detail[s] = {"prev_close": q.get("prev_close"), "time": q.get("time"), "source": q.get("source")}
-    doc = {"as_of": now_utc.strftime("%Y-%m-%dT%H:%M:%SZ"), "source": source,
+        detail[s] = {"prev_close": q.get("prev_close"), "time": q.get("time"), "source": q.get("source"),
+                     "fetched_at": stamp}
+    # as_of is the OLDEST price in the file, never the time of the latest write
+    old_asof = old.get("as_of")
+    as_of = min(((detail.get(s) or {}).get("fetched_at") or old_asof or stamp) for s in prices)
+    doc = {"as_of": as_of, "source": source,
            "note": "Delayed quotes for alerts and sizing checks. Your broker's price is the one that fills.",
            "prices": prices, "detail": detail}
     _write(path, doc)

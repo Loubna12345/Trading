@@ -49,7 +49,8 @@ class TrailingStop(unittest.TestCase):
     def test_trailing_stop_with_one_parameter_passes(self):
         o = {"symbol": "AAPL", "side": "buy", "qty": "1", "type": "trailing_stop", "time_in_force": "day",
              "trail_percent": "5"}
-        self.assertEqual(verdict(o), "PASS")
+        now = datetime.datetime(2026, 11, 5, 12, 0, tzinfo=datetime.timezone.utc)
+        self.assertEqual(verdict(o, price_times={"AAPL": "2026-11-05T10:00:00Z"}, now=now), "PASS")
 
 
 class SizingRejectsBadWeights(unittest.TestCase):
@@ -90,6 +91,37 @@ class UnverifiedTickerGuess(unittest.TestCase):
         orders = {o["symbol"]: o for o in json.load(open(out))["orders"]}
         self.assertTrue(orders["KO"].get("check_ticker"))
         self.assertFalse(orders["AAPL"].get("check_ticker"))
+
+
+class RiskPriceFreshness(unittest.TestCase):
+    QTY = {"symbol": "AAPL", "side": "buy", "qty": "2", "type": "market", "time_in_force": "day"}
+    NOW = datetime.datetime(2026, 11, 5, 12, 0, tzinfo=datetime.timezone.utc)
+
+    def test_old_price_blocks_an_order_sized_from_it(self):
+        self.assertEqual(verdict(self.QTY, price_times={"AAPL": "2026-10-01T00:00:00Z"}, now=self.NOW), "BLOCK")
+
+    def test_fresh_price_passes(self):
+        self.assertEqual(verdict(self.QTY, price_times={"AAPL": "2026-11-05T10:00:00Z"}, now=self.NOW), "PASS")
+
+    def test_missing_timestamp_for_a_needed_price_blocks(self):
+        self.assertEqual(verdict(self.QTY, price_times={}, now=self.NOW), "BLOCK")
+
+    def test_dollar_orders_do_not_need_a_fresh_price(self):
+        self.assertEqual(verdict(BUY, price_times={}, now=self.NOW), "PASS")
+
+
+class PricesFileDoesNotLieAboutAge(unittest.TestCase):
+    def test_as_of_is_the_oldest_ticker_not_the_latest_write(self):
+        d = tempfile.mkdtemp()
+        path = os.path.join(d, "prices.json")
+        t0 = datetime.datetime(2026, 10, 1, 12, 0, tzinfo=datetime.timezone.utc)
+        t1 = datetime.datetime(2026, 11, 5, 12, 0, tzinfo=datetime.timezone.utc)
+        q = lambda s, p: {"symbol": s, "price": p, "prev_close": None, "time": "", "source": "yahoo"}
+        alerts.write_prices(path, {"AAA": q("AAA", 10.0)}, t0, "yahoo")
+        doc = alerts.write_prices(path, {"BBB": q("BBB", 20.0)}, t1, "yahoo")
+        self.assertEqual(doc["as_of"], "2026-10-01T12:00:00Z")
+        self.assertEqual(doc["detail"]["AAA"]["fetched_at"], "2026-10-01T12:00:00Z")
+        self.assertEqual(doc["detail"]["BBB"]["fetched_at"], "2026-11-05T12:00:00Z")
 
 
 if __name__ == "__main__":

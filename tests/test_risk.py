@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import datetime
 import tempfile
 import unittest
 from contextlib import redirect_stdout, redirect_stderr
@@ -13,6 +14,8 @@ ticket = load("trader-broker", "ticket")
 CFG_PATH = os.path.join(ROOT, "trader-budget", "config.example.json")
 ORDERS_PATH = os.path.join(FIX, "trader-risk", "orders-reel.json")
 TODAY = "2026-10-13"
+NOW = datetime.datetime(2026, 10, 13, 15, 0, tzinfo=datetime.timezone.utc)
+TIMES = {t: "2026-10-13T14:00:00Z" for t in ("AAPL", "AXP", "GOOGL", "KO", "BAC")}  # fresh quotes
 PRICES = {"AAPL": 341.27, "AXP": 309.84, "GOOGL": 353.78, "KO": 90.11, "BAC": 53.96}
 
 
@@ -66,7 +69,7 @@ class TheReel(unittest.TestCase):
 
 class Limits(unittest.TestCase):
     def one(self, order, **over):
-        res = check.check([order], cfg(**over), prices=PRICES, today=TODAY)
+        res = check.check([order], cfg(**over), prices=PRICES, today=TODAY, price_times=TIMES, now=NOW)
         return res["results"][0]
 
     def test_max_and_min_order(self):
@@ -127,18 +130,18 @@ class Account(unittest.TestCase):
 
     def test_short_sales_are_blocked(self):
         sell = {"symbol": "KO", "side": "sell", "qty": "10", "type": "market", "time_in_force": "day"}
-        r = check.check([sell], cfg(), portfolio=self.PF, prices=PRICES, today=TODAY)["results"][0]
+        r = check.check([sell], cfg(), portfolio=self.PF, prices=PRICES, today=TODAY, price_times=TIMES, now=NOW)["results"][0]
         self.assertIn("short:", " ".join(r["reasons"]))
         sell["qty"] = "3"
-        r = check.check([sell], cfg(), portfolio=self.PF, prices=PRICES, today=TODAY)["results"][0]
+        r = check.check([sell], cfg(), portfolio=self.PF, prices=PRICES, today=TODAY, price_times=TIMES, now=NOW)["results"][0]
         self.assertEqual(r["verdict"], "PASS")
 
     def test_a_sell_frees_cash_for_a_later_buy(self):
         orders = [{"symbol": "KO", "side": "sell", "qty": "5", "type": "market", "time_in_force": "day"},
                   buy("BAC", 450)]
-        res = check.check(orders, cfg(max_position_pct=100), portfolio=self.PF, prices=PRICES, today=TODAY)
+        res = check.check(orders, cfg(max_position_pct=100), portfolio=self.PF, prices=PRICES, today=TODAY, price_times=TIMES, now=NOW)
         self.assertEqual(verdicts(res), ["PASS", "PASS"])
-        res = check.check([buy("BAC", 450)], cfg(max_position_pct=100), portfolio=self.PF, prices=PRICES, today=TODAY)
+        res = check.check([buy("BAC", 450)], cfg(max_position_pct=100), portfolio=self.PF, prices=PRICES, today=TODAY, price_times=TIMES, now=NOW)
         self.assertEqual(verdicts(res), ["BLOCK"])
 
     def test_daily_limit_and_already_placed_today(self):
