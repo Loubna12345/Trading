@@ -38,3 +38,20 @@ check in trader-data now warns about it too.
 
 About 0.75 seconds per validation of 80 days at 15-minute bars, so a full run with several settings and walk-forward
 folds on 2 years of hourly bars should take a few seconds to a minute.
+
+## End-to-end training run on made-up data (2026-11-05)
+
+Each scenario: 10 made-up stocks, 140 days of 15-minute bars, plan with 3 rules x 3 settings, discovery, then
+confirmation, then one holdout test per confirmed rule. Script lived in the scratchpad, not in the repo.
+
+| scenario | candidates after discovery | confirmed | note |
+| --- | --- | --- | --- |
+| null random walk | none | none | as wanted |
+| null volatility clustering | none | none | as wanted |
+| bull drift, no skill | none | none | rising market alone did not fool it |
+| real momentum edge | trend, orb | trend | final holdout: 9 of 10 stocks hold, p = 0.0107 |
+| open-drive edge | none | none | missed; not investigated yet |
+| mean-reversion edge | none | none | missed; only the long-only VWAP rule could fit, not investigated yet |
+
+Reading: no false positives in three no-skill cases, one of three real edges found, two missed. The protocol errs
+on the side of saying nothing. Why the two edges were missed (rule fit, too few days, or too strict) is open.
