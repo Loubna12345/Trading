@@ -1,0 +1,6 @@
+Emittent;ISIN;Meldepflichtiger;Position/Status;Art des Geschäfts;Durchschnittspreis;Aggregiertes Volumen;Währung;Datum des Geschäfts;Datum der Mitteilung
+Beispiel AG;DE0000000001;Erika Muster;Vorstand;Kauf;12,34;61.700,00;EUR;03.11.2026;05.11.2026
+Beispiel AG;DE0000000001;Hans Probe;Aufsichtsrat;Kauf;12,40;25.000,00;EUR;02.11.2026;03.11.2026
+Muster SE;DE0000000002;Max Test;Vorstand;Verkauf;101,5;1.015.000,00;EUR;14.10.2026;26.10.2026
+Muster SE;DE0000000002;Max Test;Vorstand;Ausübung von Optionen;0,00;0,00;EUR;14.10.2026;26.10.2026
+Demo NV;NL0000000003;Jan Voorbeeld;CFO;Acquisition;8.5;42500;EUR;2026-11-02;2026-11-04

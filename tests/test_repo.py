@@ -5,10 +5,10 @@ import unittest
 
 from _load import ROOT
 
-SKILLS = ["trader-copycat", "trader-news", "trader-budget", "trader-pelosi", "trader-analyst",
+SKILLS = ["trader-copycat", "trader-news", "trader-budget", "trader-insiders", "trader-analyst",
           "trader-screener", "trader-risk", "trader-broker", "trader-tax", "trader-alerts",
           "trader-rebalance"]
-ORDER_PATH = ["trader-copycat", "trader-budget", "trader-pelosi", "trader-risk", "trader-broker",
+ORDER_PATH = ["trader-copycat", "trader-budget", "trader-risk", "trader-broker",
               "trader-tax", "trader-alerts", "trader-rebalance"]
 
 
