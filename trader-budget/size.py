@@ -106,6 +106,8 @@ def parse_weights(data):
             w = float(r["weight"])
         except (TypeError, ValueError):
             raise SizeError("weight for %s is not a number: %r" % (r["ticker"], r["weight"]))
+        if not math.isfinite(w):
+            raise SizeError("weight for %s is not a finite number: %r" % (r["ticker"], r["weight"]))
         out.append({"ticker": str(r["ticker"]).strip().upper(), "name": r["name"] or "", "weight": w})
     return out
 
@@ -148,6 +150,8 @@ def normalise(rows, blocked=(), top=None):
         if r["ticker"] in seen:
             raise SizeError("%s is listed twice in the weights" % r["ticker"])
         seen.add(r["ticker"])
+        if not math.isfinite(float(r["weight"])):
+            raise SizeError("weight for %s is not a finite number: %r" % (r["ticker"], r["weight"]))
         if r["ticker"] in blocked:
             dropped.append({"ticker": r["ticker"], "reason": "on your blocked list"})
         elif r["weight"] <= 0:

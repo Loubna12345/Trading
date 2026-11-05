@@ -52,5 +52,16 @@ class TrailingStop(unittest.TestCase):
         self.assertEqual(verdict(o), "PASS")
 
 
+class SizingRejectsBadWeights(unittest.TestCase):
+    def test_nan_weight_raises_a_clean_error(self):
+        rows = [{"ticker": "AAA", "name": "a", "weight": float("nan")}, {"ticker": "BBB", "name": "b", "weight": 50}]
+        with self.assertRaises(size.SizeError):
+            size.size(rows, CFG, 5000)
+
+    def test_inf_weight_from_a_file_raises_a_clean_error(self):
+        with self.assertRaises(size.SizeError):
+            size.parse_weights({"weights": [{"ticker": "AAA", "weight": "inf"}]})
+
+
 if __name__ == "__main__":
     unittest.main()
