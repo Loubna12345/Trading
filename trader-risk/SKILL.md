@@ -49,7 +49,7 @@ batch that is fine order by order but breaks a rule together is caught.
 | format | no symbol, side not buy or sell, both or neither of qty and notional, a notional order that is not market + day (Alpaca's rule), a limit order with no limit price |
 | asset | an option symbol while `allow_options` is false; crypto or anything that is not a US stock or ETF ticker |
 | blocked | the ticker is on the `blocked` list |
-| size | under `min_order_usd` or over `max_order_usd` |
+| size | under `min_order_eur` or over `max_order_eur` |
 | position | the stock would be over `max_position_pct` of the account after the fill |
 | cash | the buy would leave less than the cash buffer, or need margin (`allow_margin` false) |
 | short | a sell of more than you hold (`allow_short` false) |
@@ -74,21 +74,21 @@ sent as a number instead of a string, an advanced (bracket) order.
 
 ## Example: the reel
 
-The five buys from trader-budget (AAPL $1,250, AXP $1,119, GOOGL $823, KO
-$708, BAC $600) on a fresh $5,000 paper account with the example config:
+The five buys from trader-budget (AAPL €1,250, AXP €1,119, GOOGL €823, KO
+€708, BAC €600) on a fresh €5,000 paper account with the example config:
 
 ```
-PASS  #1 buy AAPL $1,250
-PASS  #2 buy AXP $1,119
-PASS  #3 buy GOOGL $823
-PASS  #4 buy KO $708
-PASS  #5 buy BAC $600
-5 passed, 0 blocked. Cash after the passed orders: $500 (paper account).
+PASS  #1 buy AAPL €1,250
+PASS  #2 buy AXP €1,119
+PASS  #3 buy GOOGL €823
+PASS  #4 buy KO €708
+PASS  #5 buy BAC €600
+5 passed, 0 blocked. Cash after the passed orders: €500 (paper account).
 ```
 
-AAPL lands exactly on the 25% cap ($1,250 of $5,000), which is allowed. A
-sixth order, another $100 of AAPL, is blocked three ways: it would dip into
-the $500 cash buffer, put AAPL over its 25% cap, and repeat AAPL in the same
+AAPL lands exactly on the 25% cap (€1,250 of €5,000), which is allowed. A
+sixth order, another €100 of AAPL, is blocked three ways: it would dip into
+the €500 cash buffer, put AAPL over its 25% cap, and repeat AAPL in the same
 batch.
 
 ## What it never does

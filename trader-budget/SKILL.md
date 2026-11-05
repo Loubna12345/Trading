@@ -7,7 +7,7 @@ description: >-
   is used, supports fractional or whole shares, and writes the proposed buy
   orders to trader/orders.json in the exact shape of Alpaca's
   place_stock_order (notional as a string). Nothing is placed. Use when the
-  user says "I have $5,000", "size my trades", "how much of each should I
+  user says "I have €5,000", "size my trades", "how much of each should I
   buy", "manage my budget", "split my money", "keep 10% in cash", "no stock
   over 25%", "set my rules", or after /trader-copycat writes targets.
 argument-hint: "[budget in dollars]"
@@ -45,7 +45,7 @@ If `trader/config.json` does not exist, copy `config.example.json` into
 - **budget**: how much money this is for. Only money they can afford to lose.
 - **cash_buffer_pct**: how much stays in cash (default 10).
 - **max_position_pct**: the most any one stock may be, as a percent of the budget (default 25).
-- **max_order_usd** and **min_order_usd**: the biggest and smallest single order (2000 and 5).
+- **max_order_eur** and **min_order_eur**: the biggest and smallest single order (2000 and 5).
 - **fractional**: true if the broker buys fractional shares (Alpaca does); false for whole shares.
 - **blocked**: tickers they never want to own.
 - Keep **paper** true until they have watched it work on a paper account.
@@ -77,17 +77,17 @@ they are (a 13F is up to 45 days old when it is filed). Then hand over to
 Berkshire Hathaway's Q2 2026 13F (filed 2026-08-14), top five: Apple 22.04%,
 American Express 17.14%, Alphabet 12.62%, Coca-Cola 10.86%, Bank of America
 9.20%. Renormalised over those five: 30.67 / 23.85 / 17.56 / 15.11 / 12.80.
-A $5,000 budget, a 10% cash buffer and a 25% cap:
+A €5,000 budget, a 10% cash buffer and a 25% cap:
 
 | stock | dollars | |
 | --- | --- | --- |
-| AAPL | $1,250 | capped at 25% |
-| AXP | $1,119 | |
-| GOOGL | $823 | |
-| KO | $708 | |
-| BAC | $600 | |
-| cash buffer | $500 | |
-| left idle | $0 | |
+| AAPL | €1,250 | capped at 25% |
+| AXP | €1,119 | |
+| GOOGL | €823 | |
+| KO | €708 | |
+| BAC | €600 | |
+| cash buffer | €500 | |
+| left idle | €0 | |
 
 The first order it writes is
 `{"symbol": "AAPL", "side": "buy", "notional": "1250", "type": "market", "time_in_force": "day"}`.

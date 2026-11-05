@@ -132,7 +132,7 @@ to Needs approval too.
 
 ```
 ORDER 1 of 5, PAPER account, Alpaca
-  BUY $1,250 of AAPL, market order, good for today
+  BUY €1,250 of AAPL, market order, good for today
   READY: trader-risk PASS, waiting for your yes
   Claude will call place_stock_order with exactly:
     {"symbol": "AAPL", "side": "buy", "notional": "1250",

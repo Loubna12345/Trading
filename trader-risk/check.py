@@ -19,7 +19,7 @@ What blocks an order:
   asset         options (OCC symbols) unless "allow_options": true; crypto
                 and anything that is not a stock or ETF
   blocked       a ticker on your "blocked" list
-  size          under min_order_usd, over max_order_usd
+  size          under min_order_eur, over max_order_eur
   position      the stock would be over max_position_pct of the account
   cash          the buy would dip into your cash buffer, or need margin
   short         selling more than you hold, unless "allow_short": true
@@ -42,8 +42,8 @@ import re
 import sys
 
 DEFAULTS = {
-    "budget": None, "cash_buffer_pct": 10, "max_position_pct": 25, "max_order_usd": 2000,
-    "min_order_usd": 5, "max_orders_per_day": 10, "paper": True, "blocked": [],
+    "budget": None, "cash_buffer_pct": 10, "max_position_pct": 25, "max_order_eur": 2000,
+    "min_order_eur": 5, "max_orders_per_day": 10, "paper": True, "blocked": [],
     "allow_options": False, "allow_margin": False, "allow_short": False,
     "max_price_age_hours": 72,
 }
@@ -104,7 +104,7 @@ def _parse_time(value):
 
 
 def money(x):
-    return "$" + "{:,.2f}".format(float(x)).replace(".00", "")
+    return "€" + "{:,.2f}".format(float(x)).replace(".00", "")
 
 
 def account(cfg, portfolio, prices):
@@ -257,27 +257,27 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, pric
                                % (sym, qty, sym))
 
         if value is not None:
-            if value < float(c.get("min_order_usd") or 0) - CENT:
+            if value < float(c.get("min_order_eur") or 0) - CENT:
                 reasons.append("size: %s is under your %s minimum order"
-                               % (money(value), money(c["min_order_usd"])))
-            if c.get("max_order_usd") and value > float(c["max_order_usd"]) + CENT:
+                               % (money(value), money(c["min_order_eur"])))
+            if c.get("max_order_eur") and value > float(c["max_order_eur"]) + CENT:
                 reasons.append("size: %s is over your %s max order"
-                               % (money(value), money(c["max_order_usd"])))
+                               % (money(value), money(c["max_order_eur"])))
 
         # account effects, simulated in order
         cash = acct["cash"]
         held = acct["shares"].get(sym, 0.0)
         held_value = acct["values"].get(sym, 0.0)
         total = cash + sum(acct["values"].values())
-        buffer_usd = total * float(c.get("cash_buffer_pct") or 0) / 100.0
+        buffer_eur = total * float(c.get("cash_buffer_pct") or 0) / 100.0
         if value is not None and side == "buy":
             after_cash = cash - value
             if after_cash < -CENT and not c.get("allow_margin"):
                 reasons.append("cash: needs %s but only %s cash; that would be margin (borrowed money)"
                                % (money(value), money(cash)))
-            elif after_cash < buffer_usd - CENT:
+            elif after_cash < buffer_eur - CENT:
                 reasons.append("cash: leaves %s cash, under your %s%% buffer of %s"
-                               % (money(max(after_cash, 0)), _pct(c["cash_buffer_pct"]), money(buffer_usd)))
+                               % (money(max(after_cash, 0)), _pct(c["cash_buffer_pct"]), money(buffer_eur)))
             pos_after = held_value + value
             limit = total * float(c.get("max_position_pct") or 100) / 100.0
             if total > 0 and pos_after > limit + CENT:
@@ -325,7 +325,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, pric
         results.append({
             "index": i, "symbol": sym, "side": side,
             "amount": money(_f(notional) or 0) if notional is not None else ("%s shares" % qty),
-            "value_usd": round(value, 2) if value is not None else None,
+            "value_eur": round(value, 2) if value is not None else None,
             "fingerprint": fingerprint(o), "verdict": verdict,
             "reasons": reasons, "warnings": warns,
         })

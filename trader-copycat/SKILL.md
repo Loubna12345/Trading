@@ -139,7 +139,7 @@ new D.R. Horton (3,564 shares), sold out of Constellation Brands, added
 Alphabet, Delta, Lennar, Macy's and the New York Times, trimmed Bank of
 America, Kroger, Capital One, Nucor, Ally and DaVita. Then: "These are
 Berkshire's holdings as of June 30, 2026. Next, /trader-budget sizes them to
-your $5,000."
+your €5,000."
 
 ## What it never does
 

@@ -53,7 +53,7 @@ python3 "${CLAUDE_SKILL_DIR}/rebalance.py" --json
   more trades; a wide band means fewer.
 - **Sells first**, then buys. Buys only spend cash above the buffer; if there
   is not enough, all buys are scaled down by the same share.
-- Trades under `min_order_usd` are skipped. A trade over `max_order_usd` is
+- Trades under `min_order_eur` are skipped. A trade over `max_order_eur` is
   cut to the max with a note to run again after it fills.
 - **Untracked** holdings (not in the targets) are left alone and listed,
   unless the user asks to sell them with `--sell-untracked`.
@@ -70,15 +70,15 @@ python3 "${CLAUDE_SKILL_DIR}/rebalance.py" --json
 
 ## Example: the reel's portfolio
 
-The copy portfolio bought on 2026-10-13 (AAPL $1,250 capped, AXP $1,119,
-GOOGL $823, KO $708, BAC $600, $500 cash), valued at that day's closes, sits
+The copy portfolio bought on 2026-10-13 (AAPL €1,250 capped, AXP €1,119,
+GOOGL €823, KO €708, BAC €600, €500 cash), valued at that day's closes, sits
 on its targets: every drift is under 0.1 point, so `rebalance.py` says
-"Nothing is outside the band" and exits 1. If the user adds $2,000 of cash,
-the account is $7,000 and the cap becomes $1,750. AAPL is now 7.1 points under
+"Nothing is outside the band" and exits 1. If the user adds €2,000 of cash,
+the account is €7,000 and the cap becomes €1,750. AAPL is now 7.1 points under
 its target and AXP 6.4, both outside the 5-point band, so it proposes buying
-$499 of AAPL and $446 of AXP. GOOGL, KO and BAC are under target too, but
-inside the band, so they wait. Add $5,000 instead and all five are outside
-the band: five buys that leave the $1,000 buffer in cash.
+€499 of AAPL and €446 of AXP. GOOGL, KO and BAC are under target too, but
+inside the band, so they wait. Add €5,000 instead and all five are outside
+the band: five buys that leave the €1,000 buffer in cash.
 
 ## What it never does
 

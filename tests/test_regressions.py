@@ -129,7 +129,7 @@ class YesMeansOnlyYes(unittest.TestCase):
         return ticket.parse_yes(reply, BUY, ["AAPL", "AXP", "KO"])[0]
 
     def test_plain_yeses_pass(self):
-        for r in ("yes", "Yes.", "y", "YES!", "yes AAPL", "yes 1250", "yes, $1,250 of AAPL", "yes place it", "yes, buy it"):
+        for r in ("yes", "Yes.", "y", "YES!", "yes AAPL", "yes 1250", "yes, €1,250 of AAPL", "yes 1250 euro", "yes place it", "yes, buy it"):
             self.assertTrue(self.ok(r), r)
 
     def test_a_yes_with_extra_instructions_is_not_a_yes(self):

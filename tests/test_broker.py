@@ -30,7 +30,7 @@ class ExplicitYes(unittest.TestCase):
         return ticket.parse_yes(reply, order, BATCH)[0]
 
     def test_plain_yes_counts(self):
-        for r in ("yes", "Yes.", "YES", "y", "yes place it", "Yes, buy it", "yes AAPL", "yes $1,250 of AAPL",
+        for r in ("yes", "Yes.", "YES", "y", "yes place it", "Yes, buy it", "yes AAPL", "yes €1,250 of AAPL",
                   "yes 1250"):
             self.assertTrue(self.yes(r), r)
 
@@ -57,10 +57,10 @@ class TicketShape(unittest.TestCase):
                           "time_in_force": "day"})
 
     def test_plain_english(self):
-        self.assertEqual(ticket.plain(AAPL), "BUY $1,250 of AAPL, market order, good for today")
+        self.assertEqual(ticket.plain(AAPL), "BUY €1,250 of AAPL, market order, good for today")
         self.assertEqual(ticket.plain({"symbol": "KO", "side": "sell", "qty": "1", "type": "limit",
                                        "limit_price": "95", "time_in_force": "gtc"}),
-                         "SELL 1 share of KO, limit order at $95, good until canceled")
+                         "SELL 1 share of KO, limit order at €95, good until canceled")
 
 
 class DesktopConfig(unittest.TestCase):

@@ -45,7 +45,7 @@ TIF_WORDS = {"day": "good for today", "gtc": "good until canceled", "opg": "at t
              "cls": "at the close", "ioc": "immediate or cancel", "fok": "fill or kill"}
 YES_WORDS = ("yes", "y")
 BATCH_WORDS = {"all", "every", "everything", "rest", "remaining", "them", "both", "batch", "each"}
-FILLER_WORDS = {"of", "for", "the", "this", "one", "order", "please", "thanks", "place", "it"}
+FILLER_WORDS = {"eur", "euro", "euros", "of", "for", "the", "this", "one", "order", "please", "thanks", "place", "it"}
 DOUBT_WORDS = {"no", "not", "dont", "don't", "wait", "cancel", "stop", "but", "maybe", "later",
                "hold", "unless", "if"}
 
@@ -119,11 +119,11 @@ def tool_input(order):
 def _money(v):
     f = float(v)
     s = "{:,.2f}".format(f)
-    return "$" + (s[:-3] if s.endswith(".00") else s)
+    return "€" + (s[:-3] if s.endswith(".00") else s)
 
 
 def plain(order):
-    """BUY $1,250 of AAPL, market order, good for today"""
+    """BUY €1,250 of AAPL, market order, good for today"""
     side = str(order.get("side", "")).upper()
     sym = order.get("symbol", "?")
     if order.get("notional") is not None:

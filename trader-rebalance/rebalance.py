@@ -22,8 +22,8 @@ The rules:
   sells first   sells are listed before buys, so the cash is there
   cash buffer   buys only spend cash above the buffer; if there is not
                 enough, every buy is scaled down by the same share
-  min / max     trades under min_order_usd are skipped; a trade over
-                max_order_usd is cut to the max (run it again after it fills)
+  min / max     trades under min_order_eur are skipped; a trade over
+                max_order_eur is cut to the max (run it again after it fills)
   untracked     holdings not in the targets are left alone and listed, unless
                 --sell-untracked
 
@@ -37,7 +37,7 @@ import math
 import os
 import sys
 
-DEFAULTS = {"cash_buffer_pct": 10, "max_position_pct": 25, "max_order_usd": 2000, "min_order_usd": 5,
+DEFAULTS = {"cash_buffer_pct": 10, "max_position_pct": 25, "max_order_eur": 2000, "min_order_eur": 5,
             "fractional": True, "blocked": [], "rebalance_band_pct": 5, "paper": True}
 EPS = 1e-9
 
@@ -62,7 +62,7 @@ def money(x):
     x = float(x)
     sign = "-" if x < -0.004 else ""
     s = "{:,.2f}".format(abs(x))
-    return sign + "$" + (s[:-3] if s.endswith(".00") else s)
+    return sign + "€" + (s[:-3] if s.endswith(".00") else s)
 
 
 def fmt_qty(x):
@@ -150,7 +150,7 @@ def plan(portfolio, prices, weights, cfg, band=None, sell_untracked=False):
     cap = total * float(c["max_position_pct"]) / 100.0
     target = capped_targets(weights, total - buf, cap)
     whole = not c.get("fractional", True)
-    min_o, max_o = float(c.get("min_order_usd") or 0), float(c.get("max_order_usd") or 0)
+    min_o, max_o = float(c.get("min_order_eur") or 0), float(c.get("max_order_eur") or 0)
 
     rows, sells, buys, notes = [], [], [], []
     for t in need:
@@ -162,11 +162,11 @@ def plan(portfolio, prices, weights, cfg, band=None, sell_untracked=False):
         row = {"ticker": t, "shares": round(held.get(t, 0.0), 6), "price": prices[t], "value": round(value[t], 2),
                "current_pct": round(cur_pct, 2), "target_pct": round(tgt_pct, 2),
                "drift": round(drift, 2) if abs(drift) >= 0.005 else 0.0,
-               "target_usd": round(tgt, 2), "tracked": tracked, "action": "hold"}
+               "target_eur": round(tgt, 2), "tracked": tracked, "action": "hold"}
         rows.append(row)
         if not tracked:
             if sell_untracked and held.get(t, 0) > EPS:
-                sells.append({"ticker": t, "usd": value[t], "qty": held[t], "all": True,
+                sells.append({"ticker": t, "eur": value[t], "qty": held[t], "all": True,
                               "why": "not in your targets; selling the whole position (--sell-untracked)"})
                 row["action"] = "sell all"
             else:
@@ -177,24 +177,24 @@ def plan(portfolio, prices, weights, cfg, band=None, sell_untracked=False):
         delta = tgt - value[t]
         why = "drifted %+.1f points from its %.1f%% target (band %s)" % (drift, tgt_pct, _n(band))
         if delta < 0:
-            sells.append({"ticker": t, "usd": -delta, "qty": None, "all": False, "why": why})
+            sells.append({"ticker": t, "eur": -delta, "qty": None, "all": False, "why": why})
             row["action"] = "sell"
         else:
-            buys.append({"ticker": t, "usd": delta, "why": why})
+            buys.append({"ticker": t, "eur": delta, "why": why})
             row["action"] = "buy"
 
     orders = []
     cash_after = cash
     for s in sells:
         p = prices[s["ticker"]]
-        usd = s["usd"]
-        if max_o and usd > max_o + EPS and not s["all"]:
+        amount = s["eur"]
+        if max_o and amount > max_o + EPS and not s["all"]:
             notes.append("%s sell cut to your %s max order; run again after it fills" % (s["ticker"], money(max_o)))
-            usd = max_o
+            amount = max_o
         if s["all"]:
             qty = s["qty"]
         else:
-            qty = usd / p
+            qty = amount / p
             qty = math.floor(qty + EPS) if whole else math.floor(qty * 10000 + EPS) / 10000.0
             qty = min(qty, held[s["ticker"]])
         if qty <= EPS or qty * p < min_o - EPS:
@@ -203,10 +203,10 @@ def plan(portfolio, prices, weights, cfg, band=None, sell_untracked=False):
             continue
         cash_after += qty * p
         orders.append({"symbol": s["ticker"], "side": "sell", "qty": fmt_qty(qty), "type": "market",
-                       "time_in_force": "day", "why": s["why"], "_usd": round(qty * p, 2)})
+                       "time_in_force": "day", "why": s["why"], "_eur": round(qty * p, 2)})
 
     spendable = max(cash_after - buf, 0.0)
-    want = sum(b["usd"] for b in buys)
+    want = sum(b["eur"] for b in buys)
     scale = 1.0
     if want > spendable + EPS:
         scale = spendable / want if want else 0.0
@@ -214,27 +214,27 @@ def plan(portfolio, prices, weights, cfg, band=None, sell_untracked=False):
                      % (100 * scale, money(spendable), money(buf)))
     for b in buys:
         p = prices[b["ticker"]]
-        usd = b["usd"] * scale
-        if max_o and usd > max_o + EPS:
+        amount = b["eur"] * scale
+        if max_o and amount > max_o + EPS:
             notes.append("%s buy cut to your %s max order; run again after it fills" % (b["ticker"], money(max_o)))
-            usd = max_o
+            amount = max_o
         if whole:
-            qty = math.floor(usd / p + EPS)
+            qty = math.floor(amount / p + EPS)
             if qty < 1 or qty * p < min_o - EPS:
                 notes.append("%s buy of %s does not reach one whole share or your minimum: skipped"
-                             % (b["ticker"], money(usd)))
+                             % (b["ticker"], money(amount)))
                 continue
-            o = {"symbol": b["ticker"], "side": "buy", "qty": str(int(qty)), "_usd": round(qty * p, 2)}
+            o = {"symbol": b["ticker"], "side": "buy", "qty": str(int(qty)), "_eur": round(qty * p, 2)}
         else:
-            usd = math.floor(usd + EPS)
-            if usd < min_o - EPS or usd < 1:
-                notes.append("%s buy of %s is under your %s minimum order: skipped" % (b["ticker"], money(usd), money(min_o)))
+            amount = math.floor(amount + EPS)
+            if amount < min_o - EPS or amount < 1:
+                notes.append("%s buy of %s is under your %s minimum order: skipped" % (b["ticker"], money(amount), money(min_o)))
                 continue
-            o = {"symbol": b["ticker"], "side": "buy", "notional": str(int(usd)), "_usd": float(usd)}
+            o = {"symbol": b["ticker"], "side": "buy", "notional": str(int(amount)), "_eur": float(amount)}
         o.update({"type": "market", "time_in_force": "day", "why": b["why"]})
         orders.append(o)
 
-    spent = sum(o["_usd"] for o in orders if o["side"] == "buy")
+    spent = sum(o["_eur"] for o in orders if o["side"] == "buy")
     return {"account_value": round(total, 2), "cash": round(cash, 2), "cash_buffer": round(buf, 2),
             "cap": round(cap, 2), "band": band, "rows": rows, "orders": orders, "notes": notes,
             "cash_after": round(cash_after - spent, 2)}
@@ -265,7 +265,7 @@ def report(res):
         for o in res["orders"]:
             amt = ('notional "%s"' % o["notional"]) if "notional" in o else ('qty "%s"' % o["qty"])
             lines.append("  %s %s %s, %s, %s  (about %s)" % (o["side"], o["symbol"], amt, o["type"],
-                                                             o["time_in_force"], money(o["_usd"])))
+                                                             o["time_in_force"], money(o["_eur"])))
         lines.append("Cash after, if all of them fill: about %s." % money(res["cash_after"]))
     else:
         lines.append("Nothing is outside the band. No trades.")

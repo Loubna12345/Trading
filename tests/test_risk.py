@@ -31,8 +31,8 @@ def reel_orders():
         return json.load(fh)["orders"]
 
 
-def buy(sym, usd):
-    return {"symbol": sym, "side": "buy", "notional": str(usd), "type": "market", "time_in_force": "day"}
+def buy(sym, amount):
+    return {"symbol": sym, "side": "buy", "notional": str(amount), "type": "market", "time_in_force": "day"}
 
 
 def verdicts(res):
@@ -49,8 +49,8 @@ class TheReel(unittest.TestCase):
         self.assertEqual(verdicts(res), ["PASS"] * 5)
         self.assertEqual(res["cash_after"], 500)
         self.assertIs(res["paper"], True)
-        self.assertEqual(res["results"][0]["value_usd"], 1250)
-        self.assertEqual(res["results"][0]["amount"], "$1,250")
+        self.assertEqual(res["results"][0]["value_eur"], 1250)
+        self.assertEqual(res["results"][0]["amount"], "€1,250")
 
     def test_a_sixth_buy_is_blocked_three_ways(self):
         res = check.check(reel_orders() + [buy("AAPL", 100)], cfg(), today=TODAY)
@@ -73,8 +73,8 @@ class Limits(unittest.TestCase):
         return res["results"][0]
 
     def test_max_and_min_order(self):
-        self.assertIn("over your $2,000 max order", " ".join(self.one(buy("KO", 2500), max_position_pct=100)["reasons"]))
-        self.assertIn("under your $5 minimum", " ".join(self.one(buy("KO", 2))["reasons"]))
+        self.assertIn("over your €2,000 max order", " ".join(self.one(buy("KO", 2500), max_position_pct=100)["reasons"]))
+        self.assertIn("under your €5 minimum", " ".join(self.one(buy("KO", 2))["reasons"]))
 
     def test_blocked_list(self):
         r = self.one(buy("KO", 100), blocked=["KO"])
@@ -116,7 +116,7 @@ class Limits(unittest.TestCase):
         q["symbol"] = "KO"
         r = self.one(q)
         self.assertEqual(r["verdict"], "PASS")
-        self.assertAlmostEqual(r["value_usd"], 180.22)
+        self.assertAlmostEqual(r["value_eur"], 180.22)
 
     def test_margin(self):
         r = check.check([buy("KO", 1500)], cfg(cash_buffer_pct=0, max_position_pct=100),

@@ -99,7 +99,7 @@ class Drift(unittest.TestCase):
 
     def test_max_order_and_scaling(self):
         res = rebalance.plan(*setup(cash_add=20000))
-        self.assertTrue(all(o["_usd"] <= 2000 for o in res["orders"]))
+        self.assertTrue(all(o["_eur"] <= 2000 for o in res["orders"]))
         self.assertTrue(any("max order" in n for n in res["notes"]))
         pf, px, w, cfg = setup(cash_add=5000)
         pf["positions"].append({"ticker": "DHI", "shares": 10})

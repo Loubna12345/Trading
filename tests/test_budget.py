@@ -40,7 +40,7 @@ def run(argv):
 
 
 class TheReel(unittest.TestCase):
-    """$5,000, 10% cash, 25% cap: AAPL 1250 (capped), AXP 1119, GOOGL 823, KO 708, BAC 600, cash 500, idle 0."""
+    """€5,000, 10% cash, 25% cap: AAPL 1250 (capped), AXP 1119, GOOGL 823, KO 708, BAC 600, cash 500, idle 0."""
 
     def check_reel(self, r):
         self.assertEqual(dollars(r), REEL)
@@ -96,7 +96,7 @@ class TheReel(unittest.TestCase):
 class Rules(unittest.TestCase):
     def test_cap_redistributes_until_nobody_is_over(self):
         w = size.parse_weights({"A": 60, "B": 30, "C": 10})
-        r = size.size(w, {"budget": 1000, "cash_buffer_pct": 0, "max_position_pct": 40, "min_order_usd": 1})
+        r = size.size(w, {"budget": 1000, "cash_buffer_pct": 0, "max_position_pct": 40, "min_order_eur": 1})
         self.assertEqual(dollars(r), {"A": 400, "B": 400, "C": 200})
         self.assertEqual(sorted(p["ticker"] for p in r["positions"] if p["capped"]), ["A", "B"])
 
@@ -109,7 +109,7 @@ class Rules(unittest.TestCase):
 
     def test_slices_under_the_minimum_are_dropped_and_shared_out(self):
         w = size.parse_weights({"A": 90, "B": 7, "C": 3})
-        r = size.size(w, {"budget": 100, "cash_buffer_pct": 10, "max_position_pct": 100, "min_order_usd": 5})
+        r = size.size(w, {"budget": 100, "cash_buffer_pct": 10, "max_position_pct": 100, "min_order_eur": 5})
         self.assertNotIn("C", dollars(r))
         self.assertEqual(sum(dollars(r).values()), 90)
         self.assertTrue(all(v >= 5 for v in dollars(r).values()))
