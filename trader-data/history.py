@@ -14,6 +14,8 @@ Conventions:
     python3 history.py fetch kraken XBTEUR --interval 60 --store trader/history
     python3 history.py import yahoo saved.json --symbol SAP.DE --interval 5 --store trader/history
     python3 history.py check --symbol SAP.DE --interval 5 --store trader/history
+    python3 history.py watch --spec yahoo:SAP.DE:5 --spec kraken:XBTEUR:60 --store trader/history
+                                          # pulls what is new every 60 seconds until you press Ctrl-C
 """
 
 import argparse
@@ -256,6 +258,113 @@ def quality(bars, interval_min, always_open=False):
             "missing_share": share, "gaps": gaps[:20], "notes": notes}
 
 
+# ---------- keeping the store current ----------
+
+MIN_EVERY = 30        # seconds between rounds: be polite to free, unofficial endpoints
+MAX_SPECS = 10        # symbols per watcher
+MAX_FAILURES = 10     # failed pulls in a row before one symbol is dropped (probably blocked or wrong symbol)
+
+
+def plan_days(stored, interval_min, now):
+    """How many days back to ask Yahoo for: everything it keeps if the store is empty, otherwise from the
+    last stored day (one day of overlap so the last bar is refreshed). Returns (days, lost): lost is True
+    when the store is older than Yahoo keeps, so some bars are gone for good."""
+    limit = YAHOO_MAX_DAYS[interval_min]
+    if not stored:
+        return limit, False
+    age = now - epoch_of(stored[-1]["t"])
+    days = int(math.ceil(max(age, 0) / 86400.0)) + 1
+    if days > limit:
+        return limit, True
+    return max(days, 1), False
+
+
+def parse_spec(text):
+    parts = text.split(":")
+    if len(parts) != 3:
+        raise ValueError("spec %r must look like yahoo:SAP.DE:5 (source:symbol:minutes)" % text)
+    source, symbol, minutes = parts
+    if source not in ("yahoo", "kraken"):
+        raise ValueError("spec %r: source must be yahoo or kraken" % text)
+    if not NAME_OK.match(symbol) or ".." in symbol:
+        raise ValueError("spec %r: symbol is not safe as a file name" % text)
+    try:
+        interval = int(minutes)
+    except ValueError:
+        raise ValueError("spec %r: minutes must be a whole number" % text)
+    if source == "yahoo" and interval not in YAHOO_INTERVALS:
+        raise ValueError("spec %r: Yahoo interval must be one of %s" % (text, sorted(YAHOO_INTERVALS)))
+    if source == "kraken" and interval not in KRAKEN_INTERVALS:
+        raise ValueError("spec %r: Kraken interval must be one of %s" % (text, list(KRAKEN_INTERVALS)))
+    return {"source": source, "symbol": symbol, "interval": interval}
+
+
+def tick(spec, folder, now, fetcher):
+    """One pull for one symbol, asking only for what the store is missing."""
+    path = store_path(folder, spec["symbol"], spec["interval"])
+    stored = read_store(path)
+    notes = []
+    if spec["source"] == "yahoo":
+        days, lost = plan_days(stored, spec["interval"], now)
+        if lost:
+            notes.append("store is older than Yahoo keeps; some bars are gone for good")
+        bars, _, _ = parse_yahoo(fetcher(yahoo_url(spec["symbol"], spec["interval"], days, now=now)),
+                                 spec["interval"])
+    else:
+        since = int(epoch_of(stored[-1]["t"])) if stored else None
+        bars, _ = parse_kraken(fetcher(kraken_url(spec["symbol"], spec["interval"], since=since)),
+                               spec["interval"])
+    result = merge_store(path, bars)
+    result.update({"status": "ok", "spec": "%s:%s:%d" % (spec["source"], spec["symbol"], spec["interval"]),
+                   "notes": notes})
+    return result
+
+
+def watch(specs, folder, every=60, max_ticks=None, fetcher=None, sleep=time.sleep, now_fn=time.time,
+          log=print):
+    """Pull every `every` seconds until Ctrl-C (or max_ticks rounds). Returns one list of results per round."""
+    if every < MIN_EVERY:
+        raise ValueError("every must be at least %d seconds (free endpoints are not for hammering)" % MIN_EVERY)
+    if not specs or len(specs) > MAX_SPECS:
+        raise ValueError("give between 1 and %d symbols" % MAX_SPECS)
+    fetcher = fetcher or fetch_json
+    failures = {i: 0 for i in range(len(specs))}
+    dropped = set()
+    rounds = []
+    n = 0
+    try:
+        while max_ticks is None or n < max_ticks:
+            if n:
+                sleep(every)
+            n += 1
+            results = []
+            for i, spec in enumerate(specs):
+                label = "%s:%s:%d" % (spec["source"], spec["symbol"], spec["interval"])
+                if i in dropped:
+                    continue
+                try:
+                    r = tick(spec, folder, int(now_fn()), fetcher)
+                    failures[i] = 0
+                    log("%s  %s  +%d new, %d revised, %d stored" % (iso(now_fn()), label, r["added"],
+                                                                      r["revised"], r["total"]))
+                except (ValueError, OSError) as e:
+                    failures[i] += 1
+                    r = {"status": "error", "spec": label, "message": str(e)}
+                    log("%s  %s  FAILED (%d in a row): %s" % (iso(now_fn()), label, failures[i], e))
+                    if failures[i] >= MAX_FAILURES:
+                        dropped.add(i)
+                        r = {"status": "stopped", "spec": label, "message": str(e)}
+                        log("%s  %s  stopped after %d failures in a row" % (iso(now_fn()), label, MAX_FAILURES))
+                results.append(r)
+            if results:
+                rounds.append(results)
+            if len(dropped) == len(specs):
+                break
+    except KeyboardInterrupt:
+        log("stopped by you")
+    return rounds
+
+
 # ---------- command line ----------
 
 def main(argv=None):
@@ -282,8 +391,18 @@ def main(argv=None):
     c.add_argument("--store", required=True)
     c.add_argument("--always-open", action="store_true", help="24/7 market such as crypto")
 
+    w = sub.add_parser("watch", help="pull what is new every N seconds until Ctrl-C")
+    w.add_argument("--spec", action="append", required=True,
+                   help="source:symbol:minutes, e.g. yahoo:SAP.DE:5 or kraken:XBTEUR:60 (repeat for more)")
+    w.add_argument("--store", required=True)
+    w.add_argument("--every", type=int, default=60, help="seconds between rounds (minimum 30)")
+    w.add_argument("--max-ticks", type=int, default=None, help="stop after this many rounds")
+
     a = ap.parse_args(argv)
     try:
+        if a.cmd == "watch":
+            watch([parse_spec(t) for t in a.spec], a.store, every=a.every, max_ticks=a.max_ticks)
+            return 0
         path = store_path(a.store, a.symbol if a.cmd != "fetch" else a.symbol, a.interval)
         if a.cmd == "check":
             bars = read_store(path)

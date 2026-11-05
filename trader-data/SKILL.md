@@ -19,11 +19,22 @@ Tool in this folder (standard library Python):
 python3 "${CLAUDE_SKILL_DIR}/history.py" fetch yahoo SAP.DE --interval 5 --days 30 --store trader/history
 python3 "${CLAUDE_SKILL_DIR}/history.py" fetch kraken XBTEUR --interval 60 --store trader/history
 python3 "${CLAUDE_SKILL_DIR}/history.py" import yahoo saved.json --symbol SAP.DE --interval 5 --store trader/history
+python3 "${CLAUDE_SKILL_DIR}/history.py" watch --spec yahoo:SAP.DE:5 --spec kraken:XBTEUR:60 --store trader/history
 python3 "${CLAUDE_SKILL_DIR}/history.py" check --symbol SAP.DE --interval 5 --store trader/history
 ```
 
 The store is one CSV per symbol and interval (`SAP.DE_5m.csv`) in the format the backtester reads
 (`t,o,h,l,c,v`, times in UTC, each time is the start of the bar).
+
+## Keeping it current
+
+`watch` pulls what is new every 60 seconds (never faster than every 30) until you press Ctrl-C, for up to
+10 symbols. Each round it asks only for what the store is missing: from the last stored day for Yahoo (one
+day of overlap, so the forming bar is refreshed) and from the last stored bar for Kraken. A failed pull is
+logged and tried again next round; a symbol that fails 10 times in a row is dropped. A new bar only exists
+once per interval, so a 5-minute series gains a bar every 5 minutes however often it is asked. Pulling every
+minute for stocks while the exchange is closed returns nothing new. It must keep running on a computer that
+stays on; it stops when the window closes.
 
 ## What it refuses
 

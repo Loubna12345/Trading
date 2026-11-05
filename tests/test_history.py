@@ -297,12 +297,139 @@ class Cli(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertIn("Refused", err)
 
+    def test_watch_command_runs_one_round(self):
+        from unittest import mock
+
+        with mock.patch.object(history, "fetch_json", lambda url, timeout=20: yahoo_doc()):
+            code, out, err = self.run_cli("watch", "--spec", "yahoo:SAP.DE:5", "--store", self.dir,
+                                          "--max-ticks", "1")
+        self.assertEqual(code, 0, err)
+        self.assertIn("SAP.DE", out)
+        self.assertTrue(os.path.exists(os.path.join(self.dir, "SAP.DE_5m.csv")))
+
+    def test_watch_command_refuses_too_fast(self):
+        code, out, err = self.run_cli("watch", "--spec", "yahoo:SAP.DE:5", "--store", self.dir,
+                                      "--every", "5", "--max-ticks", "1")
+        self.assertNotEqual(code, 0)
+        self.assertIn("Refused", err)
+
     def test_check_prints_quality(self):
         src = self.write_json("y.json", yahoo_doc(n=12))
         self.run_cli("import", "yahoo", src, "--symbol", "SAP.DE", "--interval", "5", "--store", self.dir)
         code, out, err = self.run_cli("check", "--symbol", "SAP.DE", "--interval", "5", "--store", self.dir)
         self.assertEqual(code, 0, err)
         self.assertEqual(json.loads(out)["verdict"], "OK")
+
+
+class Plan(unittest.TestCase):
+    def stored(self, last_epoch):
+        return [{"t": history.iso(last_epoch - 300), "o": 1, "h": 2, "l": 1, "c": 1, "v": 0},
+                {"t": history.iso(last_epoch), "o": 1, "h": 2, "l": 1, "c": 1, "v": 0}]
+
+    def test_empty_store_asks_for_everything_yahoo_keeps(self):
+        self.assertEqual(history.plan_days([], 5, T0), (60, False))
+        self.assertEqual(history.plan_days([], 60, T0), (730, False))
+
+    def test_recent_store_asks_for_a_short_overlapping_range(self):
+        days, lost = history.plan_days(self.stored(T0 - 3 * 3600), 5, T0)
+        self.assertEqual((days, lost), (2, False))
+
+    def test_older_store_widens_the_range(self):
+        days, lost = history.plan_days(self.stored(T0 - 10 * 86400), 5, T0)
+        self.assertEqual((days, lost), (11, False))
+
+    def test_store_older_than_yahoo_keeps_is_capped_and_flagged(self):
+        days, lost = history.plan_days(self.stored(T0 - 100 * 86400), 5, T0)
+        self.assertEqual((days, lost), (60, True))
+
+
+class Watch(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.urls = []
+
+    def fetcher(self, doc=None, fail=False):
+        def f(url, timeout=20):
+            self.urls.append(url)
+            if fail:
+                raise ValueError("could not fetch")
+            return doc if doc is not None else (kraken_doc() if "kraken" in url else yahoo_doc())
+        return f
+
+    def test_spec_parsing(self):
+        self.assertEqual(history.parse_spec("yahoo:SAP.DE:5"),
+                         {"source": "yahoo", "symbol": "SAP.DE", "interval": 5})
+        for bad in ("yahoo:SAP.DE", "foo:SAP.DE:5", "yahoo:SAP.DE:x", "yahoo:../x:5", "yahoo::5"):
+            with self.assertRaises(ValueError, msg=bad):
+                history.parse_spec(bad)
+
+    def test_every_below_the_polite_minimum_is_refused(self):
+        with self.assertRaises(ValueError):
+            history.watch([history.parse_spec("yahoo:SAP.DE:5")], self.dir, every=5, max_ticks=1)
+
+    def test_too_many_symbols_are_refused(self):
+        specs = [history.parse_spec("yahoo:S%d.DE:5" % i) for i in range(11)]
+        with self.assertRaises(ValueError):
+            history.watch(specs, self.dir, every=60, max_ticks=1)
+
+    def test_each_tick_pulls_and_stores_and_widens_by_what_is_missing(self):
+        clock = [T0 + 3600]
+        sleeps = []
+
+        def sleep(sec):
+            sleeps.append(sec)
+            clock[0] += sec
+
+        out = history.watch([history.parse_spec("yahoo:SAP.DE:5")], self.dir, every=60, max_ticks=3,
+                            fetcher=self.fetcher(), sleep=sleep, now_fn=lambda: clock[0], log=lambda m: None)
+        self.assertEqual(len(out), 3)
+        self.assertEqual(sleeps, [60, 60])
+        self.assertEqual(out[0][0]["status"], "ok")
+        self.assertEqual(out[0][0]["added"], 6)
+        self.assertEqual(out[1][0]["added"], 0)
+        self.assertIn("period1=%d" % (T0 + 3600 - 60 * 86400), self.urls[0])
+        days_second = (int(self.urls[1].split("period2=")[1]) - int(self.urls[1].split("period1=")[1].split("&")[0])) // 86400
+        self.assertLessEqual(days_second, 3)
+
+    def test_crypto_tick_asks_only_for_bars_after_the_last_stored(self):
+        clock = [T0 + 7200]
+        history.watch([history.parse_spec("kraken:XBTEUR:60")], self.dir, every=60, max_ticks=2,
+                      fetcher=self.fetcher(), sleep=lambda s: clock.__setitem__(0, clock[0] + s),
+                      now_fn=lambda: clock[0], log=lambda m: None)
+        self.assertNotIn("since=", self.urls[0])
+        self.assertIn("since=", self.urls[1])
+
+    def test_a_failed_pull_is_reported_and_the_loop_keeps_going(self):
+        out = history.watch([history.parse_spec("yahoo:SAP.DE:5")], self.dir, every=60, max_ticks=3,
+                            fetcher=self.fetcher(fail=True), sleep=lambda s: None,
+                            now_fn=lambda: T0, log=lambda m: None)
+        self.assertEqual([r[0]["status"] for r in out], ["error"] * 3)
+
+    def test_ten_failures_in_a_row_stop_that_symbol(self):
+        out = history.watch([history.parse_spec("yahoo:SAP.DE:5")], self.dir, every=60, max_ticks=15,
+                            fetcher=self.fetcher(fail=True), sleep=lambda s: None,
+                            now_fn=lambda: T0, log=lambda m: None)
+        self.assertEqual(len(out), 10)
+        self.assertEqual(out[-1][0]["status"], "stopped")
+
+    def test_ctrl_c_ends_the_loop_cleanly(self):
+        def sleep(sec):
+            raise KeyboardInterrupt
+
+        out = history.watch([history.parse_spec("yahoo:SAP.DE:5")], self.dir, every=60, max_ticks=5,
+                            fetcher=self.fetcher(), sleep=sleep, now_fn=lambda: T0, log=lambda m: None)
+        self.assertEqual(len(out), 1)
+
+    def test_one_bad_symbol_does_not_stop_the_others(self):
+        def f(url, timeout=20):
+            if "BAD.DE" in url:
+                raise ValueError("no such symbol")
+            return yahoo_doc()
+
+        out = history.watch([history.parse_spec("yahoo:BAD.DE:5"), history.parse_spec("yahoo:SAP.DE:5")],
+                            self.dir, every=60, max_ticks=1, fetcher=f, sleep=lambda s: None,
+                            now_fn=lambda: T0, log=lambda m: None)
+        self.assertEqual([r["status"] for r in out[0]], ["error", "ok"])
 
 
 if __name__ == "__main__":
