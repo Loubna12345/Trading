@@ -170,7 +170,8 @@ class WalkForward(unittest.TestCase):
 
 
 GOOD = {"n_trades": 150, "net_return": 0.10, "stressed_return": 0.05, "delay2_return": 0.04,
-        "oos_return": 0.03, "oos_sharpe": 0.8, "dsr": 0.97}
+        "oos_return": 0.03, "oos_sharpe": 0.8, "dsr": 0.97, "alpha_return": 0.04, "recent_return": 0.01,
+        "max_bar_range": 0.02}
 
 
 class Decide(unittest.TestCase):
@@ -179,7 +180,7 @@ class Decide(unittest.TestCase):
 
     def test_each_hard_failure_fails(self):
         for key, bad in (("net_return", -0.01), ("stressed_return", -0.01), ("delay2_return", -0.01),
-                         ("oos_return", -0.01), ("oos_sharpe", -0.1)):
+                         ("oos_return", -0.01), ("oos_sharpe", -0.1), ("alpha_return", -0.01)):
             d = dict(GOOD, **{key: bad})
             r = validate.decide(d)
             self.assertEqual(r["verdict"], "FAIL", key)
@@ -188,6 +189,10 @@ class Decide(unittest.TestCase):
     def test_too_few_trades_or_weak_dsr_is_inconclusive_not_pass(self):
         self.assertEqual(validate.decide(dict(GOOD, n_trades=40))["verdict"], "INCONCLUSIVE")
         self.assertEqual(validate.decide(dict(GOOD, dsr=0.6))["verdict"], "INCONCLUSIVE")
+
+    def test_a_dead_recent_stretch_or_a_wild_bar_is_inconclusive(self):
+        self.assertEqual(validate.decide(dict(GOOD, recent_return=-0.01))["verdict"], "INCONCLUSIVE")
+        self.assertEqual(validate.decide(dict(GOOD, max_bar_range=0.5))["verdict"], "INCONCLUSIVE")
 
     def test_a_failure_beats_inconclusive(self):
         self.assertEqual(validate.decide(dict(GOOD, n_trades=40, stressed_return=-0.2))["verdict"], "FAIL")
@@ -201,6 +206,64 @@ class Decide(unittest.TestCase):
     def test_thresholds_are_stated(self):
         r = validate.decide(GOOD)
         self.assertTrue(all(c["rule"] for c in r["checks"]))
+
+
+class Alpha(unittest.TestCase):
+    def test_half_the_market_is_all_beta(self):
+        bench = [0.01, -0.02, 0.015, 0.0, 0.01, -0.005]
+        strat = [0.5 * x for x in bench]
+        alpha, beta = validate.alpha_returns(strat, bench)
+        self.assertAlmostEqual(beta, 0.5)
+        self.assertTrue(all(abs(a) < 1e-12 for a in alpha))
+
+    def test_market_plus_a_constant_has_that_constant_as_alpha(self):
+        bench = [0.01, -0.02, 0.015, 0.0, 0.01, -0.005]
+        strat = [x + 0.003 for x in bench]
+        alpha, beta = validate.alpha_returns(strat, bench)
+        self.assertAlmostEqual(beta, 1.0)
+        self.assertTrue(all(abs(a - 0.003) < 1e-12 for a in alpha))
+
+    def test_flat_market_means_beta_zero(self):
+        alpha, beta = validate.alpha_returns([0.01, 0.02], [0.0, 0.0])
+        self.assertEqual(beta, 0.0)
+        self.assertEqual(alpha, [0.01, 0.02])
+
+    def test_lengths_must_match(self):
+        with self.assertRaises(ValueError):
+            validate.alpha_returns([0.1], [0.1, 0.2])
+
+
+def drifting(seed, drift, n_days=60, per_day=34, glitch=False):
+    rnd = random.Random(seed)
+    bars, price = [], 100.0
+    for d in range(n_days):
+        day = "2026-%02d-%02d" % (1 + d // 28, 1 + d % 28)
+        for i in range(per_day):
+            o = price
+            c = o * (1 + drift + rnd.gauss(0, 0.002))
+            bars.append(mkbar(day, i, o, max(o, c) * 1.0005, min(o, c) * 0.9995, c, 500 + rnd.random() * 500))
+            price = c
+    if glitch:
+        b = bars[len(bars) // 2]
+        b["c"] *= 3
+        b["h"] = b["c"]
+    return bars
+
+
+class WhatTheStressTestFound(unittest.TestCase):
+    def test_a_rising_market_without_skill_does_not_pass(self):
+        for seed in (0, 1, 2):
+            rep = validate.validate(drifting(seed, 0.0003), "trend", {"window": [3, 6, 12]},
+                                    engine.make_costs(commission_bps=0, spread_bps=2, slippage_bps=1, fixed_fee=0),
+                                    252 * 34, flatten_eod=True, train_days=30, test_days=10)
+            self.assertNotEqual(rep["verdict"], "PASS", seed)
+
+    def test_a_wild_bar_is_reported(self):
+        rep = validate.validate(drifting(0, 0.0, glitch=True), "trend", {"window": [5]},
+                                engine.make_costs(commission_bps=0, spread_bps=2, slippage_bps=1, fixed_fee=0),
+                                252 * 34, flatten_eod=True, train_days=30, test_days=10)
+        self.assertNotEqual(rep["verdict"], "PASS")
+        self.assertTrue(rep["suspicious_bars"])
 
 
 class Whole(unittest.TestCase):

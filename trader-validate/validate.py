@@ -12,6 +12,10 @@ luck. This tool takes a strategy and a grid of settings and runs the checks that
                       returns (formula of Bailey and Lopez de Prado, as implemented in the endgame library;
                       the paper itself was not read)
   5. trade count      too few trades is luck
+  6. alpha            the result after removing what simply being in a rising market would have paid
+                      (beta times buy and hold); without this, any long rule "passes" in a bull market
+  7. recent stretch   the last third of the data must not be a loss (an edge that stopped is not an edge)
+  8. wild bars        a bar with a huge range is probably a bad tick and can fake a profit
 
 The verdict is PASS, FAIL or INCONCLUSIVE. FAIL is the expected answer for most ideas. The thresholds below are
 this project's choices, not sourced numbers; each is printed next to its result.
@@ -43,6 +47,7 @@ strategies = _load(os.path.join(ROOT, "trader-strategies", "strategies.py"), "tr
 
 MIN_TRADES = 100          # fewer trades than this is luck (project rule of thumb)
 MIN_DSR = 0.95            # deflated Sharpe probability needed (project choice)
+MAX_BAR_RANGE = 0.20      # a bar whose high is 20% above its low is suspicious
 STRESS = 2.0              # costs multiplied by this for the stress test
 MAX_GRID = 200            # most settings combinations allowed in one run
 EULER_GAMMA = 0.5772156649015329
@@ -108,6 +113,18 @@ def deflated_sharpe(sr, n_obs, skew, kurt, n_trials, var_sr):
     if var <= 0:
         return 1.0 if sr > sr0 else 0.0
     return ND.cdf((sr - sr0) / math.sqrt(var))
+
+
+def alpha_returns(strategy_returns, bench_returns):
+    """Per-bar strategy return minus beta times the buy-and-hold return; returns (alpha_series, beta)."""
+    if len(strategy_returns) != len(bench_returns):
+        raise ValueError("return series differ in length")
+    n = len(bench_returns)
+    mb = sum(bench_returns) / n
+    ms = sum(strategy_returns) / n
+    var = sum((b - mb) ** 2 for b in bench_returns)
+    beta = 0.0 if var <= 1e-18 else sum((s - ms) * (b - mb) for s, b in zip(strategy_returns, bench_returns)) / var
+    return [s - beta * b for s, b in zip(strategy_returns, bench_returns)], beta
 
 
 def expand_grid(grid):
@@ -207,7 +224,11 @@ def decide(v):
         ("orders two bars late", "delay2_return", lambda x: x > 0, "above 0", True),
         ("walk-forward result on unseen days", "oos_return", lambda x: x > 0, "above 0", True),
         ("walk-forward Sharpe", "oos_sharpe", lambda x: x > 0, "above 0", True),
-        ("deflated Sharpe probability", "dsr", lambda x: x >= MIN_DSR, "at least %g" % MIN_DSR, False),
+        ("alpha after removing market exposure", "alpha_return", lambda x: x > 0, "above 0", True),
+        ("deflated Sharpe probability (of the alpha)", "dsr", lambda x: x >= MIN_DSR, "at least %g" % MIN_DSR, False),
+        ("last third of the data", "recent_return", lambda x: x > 0, "above 0", False),
+        ("largest single-bar range", "max_bar_range", lambda x: x <= MAX_BAR_RANGE,
+         "at most %g%% (otherwise look for a bad tick)" % (MAX_BAR_RANGE * 100), False),
     ]
     checks, hard_fail, soft = [], False, False
     for label, key, ok, rule, hard in rules:
@@ -242,14 +263,16 @@ def validate(bars, name, grid, costs, periods_per_year, flatten_eod=False, train
              earlier_trials=0, capital=10000.0):
     combos = expand_grid({k: list(v) for k, v in grid.items()})
     kw = {"flatten_eod": flatten_eod}
+    bench = engine.buy_and_hold(bars, costs, capital=capital)
+    bench_rets = metrics.period_returns(bench["equity"])
     results = []
     for params in combos:
         res = _run(bars, lambda p=params: strategies.make(name, **p), costs, kw, capital)
-        rets = metrics.period_returns(res["equity"])
-        results.append((sharpe_pp(rets), params, res, rets))
+        alpha, beta = alpha_returns(metrics.period_returns(res["equity"]), bench_rets)
+        results.append((sharpe_pp(alpha), params, res, alpha, beta))
     trial_srs = [r[0] for r in results if r[0] is not None]
     best = max(results, key=lambda r: r[0] if r[0] is not None else float("-inf"))
-    best_sr, best_params, best_res, best_rets = best
+    best_sr, best_params, best_res, best_alpha, best_beta = best
     n_trials = len(combos) + int(earlier_trials)
     mean_sr = sum(trial_srs) / len(trial_srs) if len(trial_srs) > 1 else 0.0
     var_sr = (sum((x - mean_sr) ** 2 for x in trial_srs) / (len(trial_srs) - 1)) if len(trial_srs) > 1 else 0.0
@@ -266,22 +289,28 @@ def validate(bars, name, grid, costs, periods_per_year, flatten_eod=False, train
         notes.append("walk-forward not computed: %s" % e)
 
     dsr = None
-    if best_sr is not None and len(best_rets) >= 3:
-        skew, kurt = moments(best_rets)
-        dsr = deflated_sharpe(best_sr, len(best_rets), skew, kurt, n_trials, var_sr)
+    if best_sr is not None and len(best_alpha) >= 3:
+        skew, kurt = moments(best_alpha)
+        dsr = deflated_sharpe(best_sr, len(best_alpha), skew, kurt, n_trials, var_sr)
 
-    bench = engine.buy_and_hold(bars, costs, capital=capital)
+    eq = best_res["equity"]
+    third = eq[2 * len(eq) // 3:]
+    wild = engine.suspicious_bars(bars, MAX_BAR_RANGE)
     values = {"n_trades": len(best_res["trades"]),
-              "net_return": metrics.total_return(best_res["equity"]),
+              "net_return": metrics.total_return(eq),
               "stressed_return": metrics.total_return(stressed["equity"]),
               "delay2_return": scan[1]["total_return"],
               "oos_return": wf["oos_total_return"] if wf else None,
               "oos_sharpe": wf["oos_sharpe"] if wf else None,
-              "dsr": dsr}
+              "alpha_return": sum(best_alpha),
+              "dsr": dsr,
+              "recent_return": (third[-1] / third[0] - 1.0) if len(third) >= 2 else None,
+              "max_bar_range": max([r for _, r in wild], default=max(b["h"] / b["l"] - 1.0 for b in bars))}
     verdict = decide(values)
     verdict["reasons"] = notes + verdict["reasons"]
     return {"verdict": verdict["verdict"], "reasons": verdict["reasons"], "checks": verdict["checks"],
-            "best_params": best_params, "n_trials": n_trials, "settings_tried_here": len(combos),
+            "best_params": best_params, "beta_to_buy_and_hold": best_beta, "suspicious_bars": wild[:20],
+            "n_trials": n_trials, "settings_tried_here": len(combos),
             "break_even_extra_bps": be, "delay_scan": scan, "walk_forward": wf, "deflated_sharpe": dsr,
             "best_net_return": values["net_return"], "best_trades": values["n_trades"],
             "benchmark": metrics.summarize(bench["equity"], [], periods_per_year, min_trades=0),
