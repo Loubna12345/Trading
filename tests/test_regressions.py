@@ -142,5 +142,18 @@ class YesMeansOnlyYes(unittest.TestCase):
             self.assertFalse(self.ok(r), r)
 
 
+class NoUpstreamIdentity(unittest.TestCase):
+    def test_python_files_do_not_mention_the_upstream_author(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        for base, dirs, files in os.walk(root):
+            dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", "tests", "docs")]
+            for f in files:
+                if f.endswith(".py"):
+                    with open(os.path.join(base, f), encoding="utf-8") as fh:
+                        text = fh.read()
+                    self.assertNotIn("Jakeschincariol", text, f)
+                    self.assertNotIn("trader-skill/1.0", text, f)
+
+
 if __name__ == "__main__":
     unittest.main()

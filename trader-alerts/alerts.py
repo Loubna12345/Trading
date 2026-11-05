@@ -46,7 +46,7 @@ import time
 import urllib.error
 import urllib.request
 
-UA = "Mozilla/5.0 (compatible; trader-skill/1.0; +https://github.com/Jakeschincariol/trader-skill)"
+UA = "Mozilla/5.0 (compatible; trading-local/1.0)"
 PAUSE = 0.5  # seconds between requests: be polite to free endpoints
 
 NYSE_HOLIDAYS = {

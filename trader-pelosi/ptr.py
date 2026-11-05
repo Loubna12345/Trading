@@ -48,7 +48,7 @@ import zipfile
 INDEX_URL = "https://disclosures-clerk.house.gov/public_disc/financial-pdfs/%d%s.zip"
 PTR_URL = "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/%d/%s.pdf"
 FD_URL = "https://disclosures-clerk.house.gov/public_disc/financial-pdfs/%d/%s.pdf"
-UA = "trader-skill/1.0 (+https://github.com/Jakeschincariol/trader-skill)"
+UA = "trading-local/1.0"
 FILING_TYPES = {
     "P": "Periodic Transaction Report", "O": "Annual report", "A": "Amendment",
     "C": "Candidate report", "X": "Extension", "T": "Termination report",

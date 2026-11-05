@@ -133,7 +133,7 @@ class Fetcher(object):
                 return fh.read()
         if sec and not self.ua:
             raise EdgarError(UA_HELP)
-        headers = {"User-Agent": self.ua or "trader-skill/1.0",
+        headers = {"User-Agent": self.ua or "trading-local/1.0",
                    "Accept-Encoding": "gzip"}
         return self._open(urllib.request.Request(url, headers=headers), url)
 
@@ -144,7 +144,7 @@ class Fetcher(object):
                 raise EdgarError("offline: no file %s for %s" % (path, url))
             with open(path, "rb") as fh:
                 return json.loads(fh.read().decode("utf-8"))
-        h = {"Content-Type": "application/json", "User-Agent": "trader-skill/1.0"}
+        h = {"Content-Type": "application/json", "User-Agent": "trading-local/1.0"}
         h.update(headers or {})
         req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"),
                                      headers=h, method="POST")
