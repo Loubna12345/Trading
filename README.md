@@ -25,6 +25,7 @@ docs/FINDINGS.md are closed.
 | trader-tax | German tax tracker: FIFO lots, stock-loss pot, fund exemption, allowance, Abgeltungsteuer |
 | trader-insiders | Directors' dealings (MAR Art. 19) from a table you save from a regulator's database |
 | trader-backtest | Replays a rule over saved price bars after costs, next to buy and hold; no look-ahead, costs required (step 1 of docs/ROADMAP.md) |
+| trader-data | Downloads intraday bars (Yahoo, Kraken), refuses bad data, keeps a growing local store and reports gaps (step 2 of docs/ROADMAP.md) |
 | trader-copycat | Rebuilds a US fund's 13F portfolio as targets (US-listed stocks only) |
 | trader-analyst, trader-screener, trader-news | Read US company filings (SEC); US-listed companies only |
 
