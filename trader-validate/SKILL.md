@@ -31,7 +31,10 @@ Strategies come from /trader-strategies, bars from /trader-data, costs from the 
 | cost stress | still above 0 with every cost doubled | real costs are usually worse than the guess |
 | orders two bars late | still above 0 | a real edge fades gradually; a fragile one collapses |
 | walk-forward | return and Sharpe above 0 on days the settings were not chosen on | settings picked on one window are scored on the next |
-| deflated Sharpe | probability at least 0.95 | the Sharpe ratio is discounted for how many settings were tried |
+| alpha | above 0 after removing beta times buy and hold | in a rising market any rule that is often long "wins"; only what beats being in the market counts |
+| deflated Sharpe | probability at least 0.95, computed on the alpha | the Sharpe ratio is discounted for how many settings were tried |
+| last third of the data | not a loss | an edge that stopped working is not an edge |
+| largest single-bar range | high at most 20% above the low | a bad price tick can fake a profit; each flagged bar is listed |
 
 The thresholds (100 trades, 0.95, 2x costs) are this project's choices, not sourced numbers. The deflated
 Sharpe formula follows Bailey and Lopez de Prado as implemented in the endgame library; the paper itself was
@@ -54,8 +57,11 @@ few days). PASS needs every check to hold. A PASS is permission to try the rule 
 
 ## What to tell the user
 
-- On made-up price data with no edge, 30 of 30 random series got FAIL, and 9 of 10 series with a built-in trend
-  got PASS. That shows the checks can tell the two apart on simple data; it says nothing about real markets.
+- Checked only on made-up price data (14 scenarios, see docs/STRESS_TEST.md). It can tell a series with a
+  built-in edge from one without on simple data; it says nothing about real markets.
+- A rule that trades about once a day (the opening-range breakout) needs 100 or more trading days to reach
+  100 trades, so on a few months of data it stays INCONCLUSIVE however good it is.
+- The "two bars late" check also rejects edges that last only one bar. Say so if a fast rule fails only there.
 - Taxes are not included. Say that the result is a replay of the past, not a prediction.
 
 ## Safety
