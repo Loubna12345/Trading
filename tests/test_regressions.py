@@ -41,5 +41,16 @@ class RiskFailsClosed(unittest.TestCase):
         self.assertEqual(verdict(o), "BLOCK")
 
 
+class TrailingStop(unittest.TestCase):
+    def test_trailing_stop_needs_its_trail_parameter(self):
+        o = {"symbol": "AAPL", "side": "buy", "qty": "1", "type": "trailing_stop", "time_in_force": "day"}
+        self.assertEqual(verdict(o), "BLOCK")
+
+    def test_trailing_stop_with_one_parameter_passes(self):
+        o = {"symbol": "AAPL", "side": "buy", "qty": "1", "type": "trailing_stop", "time_in_force": "day",
+             "trail_percent": "5"}
+        self.assertEqual(verdict(o), "PASS")
+
+
 if __name__ == "__main__":
     unittest.main()

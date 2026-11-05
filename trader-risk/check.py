@@ -167,7 +167,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None):
             reasons.append("format: side must be buy or sell, got %r" % o.get("side"))
         if (qty is None) == (notional is None):
             reasons.append("format: give exactly one of qty or notional")
-        for k in ("qty", "notional", "limit_price", "stop_price"):
+        for k in ("qty", "notional", "limit_price", "stop_price", "trail_price", "trail_percent"):
             if o.get(k) is not None:
                 v = _f(o.get(k))
                 if v is None or v <= 0:
@@ -185,6 +185,8 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None):
             reasons.append("format: a %s order needs a limit_price" % typ)
         if typ in ("stop", "stop_limit") and o.get("stop_price") is None:
             reasons.append("format: a %s order needs a stop_price" % typ)
+        if typ == "trailing_stop" and (o.get("trail_price") is None) == (o.get("trail_percent") is None):
+            reasons.append("format: a trailing_stop needs exactly one of trail_price or trail_percent")
         if o.get("extended_hours") and not (typ == "limit" and tif == "day"):
             reasons.append("format: extended hours needs a limit order with time_in_force day")
         if o.get("order_class") or o.get("advanced_instructions"):
