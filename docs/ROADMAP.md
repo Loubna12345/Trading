@@ -10,8 +10,8 @@ order without the existing risk check and your yes, paper keys only.
 
 | Step | What | Done when | Status |
 | --- | --- | --- | --- |
-| 1 | `trader-backtest`: metrics and a bar-based backtester (costs, execution delay of at least 1 bar, end-of-day flatten, buy-and-hold benchmark) | tests pass; a benchmark run on a CSV prints metrics | in progress |
-| 2 | Price history loader: intraday bars for US stocks, European stocks and ETFs, crypto; each source checked for gaps, time zones, splits | each source has a documented limit and a validity check; bad data is refused | not started |
+| 1 | `trader-backtest`: metrics and a bar-based backtester (costs, execution delay of at least 1 bar, end-of-day flatten, buy-and-hold benchmark) | tests pass; a benchmark run on a CSV prints metrics | done |
+| 2 | Price history loader: intraday bars for US stocks, European stocks and ETFs, crypto; each source checked for gaps, time zones, splits | each source has a documented limit and a validity check; bad data is refused | done for Yahoo and Kraken; live download not yet tried |
 | 3 | Strategy library as rule files, one per idea (opening range breakout, VWAP reversion, trend filter, momentum), each with its reason and its asset class | each strategy runs in the backtester and has tests on synthetic bars | not started |
 | 4 | Validation harness: delay scan, break-even cost, walk-forward, count of settings tried, deflated Sharpe | a strategy gets PASS or FAIL with the reasons; FAIL is the expected result for most ideas | not started |
 | 5 | Asset profiles: stocks, ETFs, crypto each with hours, costs, tax treatment and risk limits (crypto needs its own tax module; FX is out of scope until researched) | a profile is required to run a backtest or a paper trade | not started |
