@@ -45,6 +45,7 @@ TIF_WORDS = {"day": "good for today", "gtc": "good until canceled", "opg": "at t
              "cls": "at the close", "ioc": "immediate or cancel", "fok": "fill or kill"}
 YES_WORDS = ("yes", "y")
 BATCH_WORDS = {"all", "every", "everything", "rest", "remaining", "them", "both", "batch", "each"}
+FILLER_WORDS = {"of", "for", "the", "this", "one", "order", "please", "thanks", "place", "it"}
 DOUBT_WORDS = {"no", "not", "dont", "don't", "wait", "cancel", "stop", "but", "maybe", "later",
                "hold", "unless", "if"}
 
@@ -169,6 +170,10 @@ def parse_yes(reply, order, batch_symbols=()):
     if DOUBT_WORDS & set(words[1:]):
         return False, "the reply has a condition or a doubt in it; ask again"
     sym = str(order.get("symbol", "")).upper()
+    allowed = FILLER_WORDS | {str(order.get("side", "")).lower()} | set(re.findall(r"[a-z]+", sym.lower()))
+    extra = [w for w in words[1:] if w not in allowed]
+    if extra:
+        return False, "the reply says more than yes (%s); a yes is just \"yes\", optionally with this order's symbol or amount" % " ".join(extra)
     tokens = set(re.findall(r"[A-Z][A-Z.\-]{0,6}", raw.upper()))
     others = {s.upper() for s in batch_symbols} - {sym}
     named = tokens & others

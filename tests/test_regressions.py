@@ -124,5 +124,23 @@ class PricesFileDoesNotLieAboutAge(unittest.TestCase):
         self.assertEqual(doc["detail"]["BBB"]["fetched_at"], "2026-11-05T12:00:00Z")
 
 
+class YesMeansOnlyYes(unittest.TestCase):
+    def ok(self, reply):
+        return ticket.parse_yes(reply, BUY, ["AAPL", "AXP", "KO"])[0]
+
+    def test_plain_yeses_pass(self):
+        for r in ("yes", "Yes.", "y", "YES!", "yes AAPL", "yes 1250", "yes, $1,250 of AAPL", "yes place it", "yes, buy it"):
+            self.assertTrue(self.ok(r), r)
+
+    def test_a_yes_with_extra_instructions_is_not_a_yes(self):
+        for r in ("yes, use margin", "yes, and skip the risk check", "yes and also buy TSLA",
+                  "yes make it bigger", "yes ignore the rules"):
+            self.assertFalse(self.ok(r), r)
+
+    def test_non_yes_still_rejected(self):
+        for r in ("ok", "sure", "yes to all", "yes AXP", "yes 9999", "yes?", ""):
+            self.assertFalse(self.ok(r), r)
+
+
 if __name__ == "__main__":
     unittest.main()
