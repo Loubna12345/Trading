@@ -63,5 +63,34 @@ class SizingRejectsBadWeights(unittest.TestCase):
             size.parse_weights({"weights": [{"ticker": "AAA", "weight": "inf"}]})
 
 
+class UnverifiedTickerGuess(unittest.TestCase):
+    def test_risk_blocks_a_flagged_order(self):
+        self.assertEqual(verdict(dict(BUY, check_ticker=True)), "BLOCK")
+
+    def test_budget_carries_the_flag_onto_the_order(self):
+        rows = size.parse_weights({"weights": [{"ticker": "AAPL", "weight": 60},
+                                               {"ticker": "KO", "weight": 40, "check_ticker": True}]})
+        res = size.size(rows, CFG, 5000)
+        orders = {o["symbol"]: o for o in size.orders_from(res)}
+        self.assertTrue(orders["KO"].get("check_ticker"))
+        self.assertFalse(orders["AAPL"].get("check_ticker"))
+
+    def test_flagged_target_becomes_a_flagged_rebalance_buy(self):
+        d = tempfile.mkdtemp()
+        w = lambda name, doc: json.dump(doc, open(os.path.join(d, name), "w"))
+        w("pf.json", {"cash": 5000, "positions": []})
+        w("px.json", {"as_of": "2026-11-05T10:00:00Z", "prices": {"AAPL": 341.27, "KO": 90.11}})
+        w("tg.json", {"weights": [{"ticker": "AAPL", "weight": 60}, {"ticker": "KO", "weight": 40, "check_ticker": True}]})
+        w("cfg.json", {"paper": True})
+        out = os.path.join(d, "orders.json")
+        argv = ["--portfolio", os.path.join(d, "pf.json"), "--prices", os.path.join(d, "px.json"),
+                "--targets", os.path.join(d, "tg.json"), "--config", os.path.join(d, "cfg.json"), "--write", out]
+        with contextlib.redirect_stdout(io.StringIO()):
+            rebalance.main(argv)
+        orders = {o["symbol"]: o for o in json.load(open(out))["orders"]}
+        self.assertTrue(orders["KO"].get("check_ticker"))
+        self.assertFalse(orders["AAPL"].get("check_ticker"))
+
+
 if __name__ == "__main__":
     unittest.main()

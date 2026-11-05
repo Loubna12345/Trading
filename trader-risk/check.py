@@ -187,6 +187,9 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None):
             reasons.append("format: a %s order needs a stop_price" % typ)
         if typ == "trailing_stop" and (o.get("trail_price") is None) == (o.get("trail_percent") is None):
             reasons.append("format: a trailing_stop needs exactly one of trail_price or trail_percent")
+        if o.get("check_ticker"):
+            reasons.append("ticker: %s is an unverified ticker guess (check_ticker); confirm it against the "
+                           "filing, then fix it in trader/tickers.json or with --figi" % (sym or "?"))
         if o.get("extended_hours") and not (typ == "limit" and tif == "day"):
             reasons.append("format: extended hours needs a limit order with time_in_force day")
         if o.get("order_class") or o.get("advanced_instructions"):

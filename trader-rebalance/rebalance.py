@@ -87,6 +87,15 @@ def parse_targets(doc, blocked=()):
     return {t: 100.0 * w / tot for t, w in out.items()}
 
 
+def flagged_tickers(doc):
+    """Tickers the copycat tool marked check_ticker (an unverified guess). Their buys must not pass trader-risk."""
+    rows = doc.get("weights", doc) if isinstance(doc, dict) else doc
+    if not isinstance(rows, list):
+        return set()
+    return {str(r.get("ticker") or r.get("symbol") or "").upper() for r in rows
+            if isinstance(r, dict) and r.get("check_ticker")}
+
+
 def capped_targets(weights, sleeve, cap):
     """Dollar target per ticker, proportional to weight, none above the cap."""
     alloc, active, money_left = {}, dict(weights), sleeve
@@ -287,8 +296,13 @@ def main(argv=None):
         pdoc = read_json(a.prices, "prices (trader-alerts: alerts.py quote --holdings --write)")
         prices = {str(k).upper(): float(v) for k, v in (pdoc.get("prices", pdoc) or {}).items()
                   if isinstance(v, (int, float))}
-        weights = parse_targets(read_json(a.targets, "targets"), cfg.get("blocked"))
+        targets_doc = read_json(a.targets, "targets")
+        weights = parse_targets(targets_doc, cfg.get("blocked"))
         res = plan(portfolio, prices, weights, cfg, a.band, a.sell_untracked)
+        flagged = flagged_tickers(targets_doc)
+        for o in res["orders"]:
+            if o.get("side") == "buy" and str(o.get("symbol", "")).upper() in flagged:
+                o["check_ticker"] = True
         if a.write and res["orders"]:
             d = os.path.dirname(a.write)
             if d:

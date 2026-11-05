@@ -97,7 +97,7 @@ def parse_weights(data):
             w = r.get("weight", r.get("weight_pct", r.get("pct")))
             if not t or w is None:
                 raise SizeError("weights[%d] needs a ticker and a weight" % i)
-            rows.append({"ticker": t, "name": r.get("name", ""), "weight": w})
+            rows.append({"ticker": t, "name": r.get("name", ""), "weight": w, "check_ticker": bool(r.get("check_ticker"))})
     else:
         raise SizeError("weights must be a list or an object")
     out = []
@@ -108,7 +108,8 @@ def parse_weights(data):
             raise SizeError("weight for %s is not a number: %r" % (r["ticker"], r["weight"]))
         if not math.isfinite(w):
             raise SizeError("weight for %s is not a finite number: %r" % (r["ticker"], r["weight"]))
-        out.append({"ticker": str(r["ticker"]).strip().upper(), "name": r["name"] or "", "weight": w})
+        out.append({"ticker": str(r["ticker"]).strip().upper(), "name": r["name"] or "", "weight": w,
+                    "check_ticker": bool(r.get("check_ticker"))})
     return out
 
 
@@ -323,7 +324,7 @@ def size(rows, cfg, budget=None, prices=None, whole=None, cents=False, top=None)
         t = r["ticker"]
         p = {"ticker": t, "name": r["name"], "weight": round(r["weight"], 2),
              "source_weight": r["source_weight"], "dollars": dollars[t],
-             "capped": t in capped}
+             "capped": t in capped, "check_ticker": bool(r.get("check_ticker"))}
         if prices.get(t):
             p["price"] = prices[t]
             p["shares"] = shares[t] if whole else round(dollars[t] / prices[t], 4)
@@ -364,6 +365,8 @@ def orders_from(result, source=""):
             o["qty"] = str(int(p["shares"]))
         else:
             o["notional"] = _num(p["dollars"])
+        if p.get("check_ticker"):
+            o["check_ticker"] = True
         o.update({"type": "market", "time_in_force": "day", "why": why})
         out.append(o)
     return out
