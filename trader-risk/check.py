@@ -36,6 +36,7 @@ import argparse
 import datetime
 import hashlib
 import json
+import math
 import os
 import re
 import sys
@@ -80,10 +81,14 @@ def fingerprint(order):
 
 
 def _f(x):
+    """A finite float, or None. NaN and infinity count as "not a number" so every check fails closed."""
+    if isinstance(x, bool):
+        return None
     try:
-        return float(x)
+        v = float(x)
     except (TypeError, ValueError):
         return None
+    return v if math.isfinite(v) else None
 
 
 def money(x):
