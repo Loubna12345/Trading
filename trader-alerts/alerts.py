@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Price alerts and the NYSE clock for trader-alerts. Standard library only.
+"""Price alerts and the market clocks (Xetra, Euronext, NYSE) for trader-alerts. Standard library only.
 
-    python3 alerts.py clock                          # is the NYSE open? next open / close
-    python3 alerts.py quote AAPL KO --write          # quotes -> trader/prices.json
+    python3 alerts.py clock                          # are Xetra, Euronext and the NYSE open? next open
+    python3 alerts.py clock --market XETRA           # one market (times without an offset are Berlin time)
+    python3 alerts.py quote SAP.DE KO --fx USD=1.08 --fx-date 2026-11-05 --write
+                                                     # quotes -> trader/prices.json, converted to euro
+                                                     # (one euro buys 1.08 dollars; read the rate on the ECB site)
     python3 alerts.py quote --holdings --write       # every ticker in your portfolio and targets
     python3 alerts.py add --symbol AAPL --above 350  # rules live in trader/alerts.json
     python3 alerts.py add --symbol BAC --stop 50
     python3 alerts.py add --symbol KO --pct 3
-    python3 alerts.py add --opening-bell
+    python3 alerts.py add --opening-bell --market XETRA
     python3 alerts.py check                          # rings what hit, once; exit 1 if nothing rang
     python3 alerts.py list
     python3 alerts.py reset aapl-above-350
@@ -17,7 +20,9 @@ Rule types:
   below / stop  the price is at or below "price" (a stop or a dip to buy)
   pct_move      the price moved "pct" percent or more from the previous close
                 (or from "ref" if you give one); "direction": "up" or "down"
-  opening_bell  the NYSE opened today (rings once per trading day)
+  opening_bell  the market ("market": NYSE, XETRA or EURONEXT; default NYSE) opened today (rings once a day)
+
+Alert prices are in the stock's own currency (what the exchange shows). Only prices.json is in euro.
 
 An above / below alert rings ONCE and then stays quiet until you reset it,
 unless the rule has "rearm": true (it re-arms when the price crosses back).
@@ -32,7 +37,8 @@ Quotes (free, delayed, for alerts only, never for placing orders):
 
 NYSE calendar: the 2026 and 2027 holidays and 1:00 p.m. early closes as
 published at https://www.nyse.com/markets/hours-calendars (read 2026-10-13).
-Outside those years the clock says the holiday list is unknown.
+Xetra and Euronext calendars: see the notes above XETRA_CLOSED in this file.
+Outside the years a calendar covers, the clock says the holiday list is unknown.
 """
 
 import argparse
@@ -118,8 +124,9 @@ def eastern_to_utc(local):
     return local + datetime.timedelta(hours=5)
 
 
-def parse_now(text):
-    """ISO time -> naive UTC. A time without an offset is taken as New York time."""
+def parse_now(text, market=None):
+    """ISO time -> naive UTC. A time without an offset is taken as New York time,
+    or as Berlin/Paris time when `market` is a European market."""
     if not text:
         return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0, tzinfo=None)
     t = text.strip().replace("Z", "+00:00")
@@ -128,6 +135,8 @@ def parse_now(text):
     except ValueError:
         raise AlertError("--now wants an ISO time like 2026-10-13T09:31 (New York) or ...Z (UTC)")
     if dt.tzinfo is None:
+        if market in EU_MARKETS:
+            return cet_to_utc(dt)
         return eastern_to_utc(dt)
     return (dt - dt.utcoffset()).replace(tzinfo=None)
 
@@ -173,6 +182,111 @@ def market_status(now_utc):
     for _ in range(15):
         if session(nd):
             st["next_open"] = "%s 09:30" % nd.isoformat()
+            break
+        nd += datetime.timedelta(days=1)
+    return st
+
+
+# ---------------------------------------------------------------- European markets
+
+# Xetra: Deutsche Boerse trading calendar, read 2026-11-05
+#   https://cashmarket.deutsche-boerse.com/cash-en/trading/trading-calendar-and-trading-hours
+# Continuous trading Mon-Fri 09:00-17:30 CET. No half days: 24 and 31 December are closed all day.
+XETRA_CLOSED = {
+    "2026-01-01": "New Year's Day", "2026-04-03": "Good Friday", "2026-04-06": "Easter Monday",
+    "2026-05-01": "Labour Day", "2026-12-24": "Christmas Eve", "2026-12-25": "Christmas Day",
+    "2026-12-31": "New Year's Eve",
+    "2027-01-01": "New Year's Day", "2027-03-26": "Good Friday", "2027-03-29": "Easter Monday",
+    "2027-12-24": "Christmas Eve", "2027-12-31": "New Year's Eve",
+}
+# Euronext: "2026 Holiday Calendar for Euronext's Cash and Derivatives markets", read 2026-11-05
+#   https://live.euronext.com/resources/trading-hours-holidays
+# That page lists 2026 only (2027 not published yet) and does not state the trading hours; 09:00-17:30 CET is
+# the usual cash session. 24 and 31 December 2026 are half days on Paris, Amsterdam, Brussels and Lisbon with
+# closing times "to be announced", so they count as closed here. Milan is closed on those two days.
+# Dublin and Oslo have extra closed days of their own, so .IR and .OL have no clock here.
+EURONEXT_CLOSED = {
+    "2026-01-01": "New Year's Day", "2026-04-03": "Good Friday", "2026-04-06": "Easter Monday",
+    "2026-05-01": "Labour Day", "2026-12-25": "Christmas Day",
+}
+EURONEXT_HALF_DAYS = {"2026-12-24": "Christmas Eve", "2026-12-31": "New Year's Eve"}
+EU_MARKETS = {
+    "XETRA": {"name": "Xetra", "closed": XETRA_CLOSED, "half": {}, "years": (2026, 2027),
+              "open": datetime.time(9, 0), "close": datetime.time(17, 30)},
+    "EURONEXT": {"name": "Euronext", "closed": EURONEXT_CLOSED, "half": EURONEXT_HALF_DAYS, "years": (2026,),
+                 "open": datetime.time(9, 0), "close": datetime.time(17, 30)},
+}
+MARKET_NAMES = ["NYSE"] + list(EU_MARKETS)
+SUFFIX_MARKET = {"DE": "XETRA", "PA": "EURONEXT", "AS": "EURONEXT", "BR": "EURONEXT", "LS": "EURONEXT",
+                 "MI": "EURONEXT"}
+
+
+def market_for(sym):
+    """'KO' -> 'NYSE', 'SAP.DE' -> 'XETRA', 'MC.PA' -> 'EURONEXT'. None if no clock is built for it."""
+    suf = exchange_suffix(sym)
+    if suf is None:
+        return "NYSE"
+    return SUFFIX_MARKET.get(suf)
+
+
+def _last_sunday(year, month):
+    d = datetime.date(year, month + 1, 1) - datetime.timedelta(days=1) if month < 12 else datetime.date(year, 12, 31)
+    return d - datetime.timedelta(days=(d.weekday() + 1) % 7)
+
+
+def cet_offset(utc):
+    """Hours from UTC in Berlin/Paris: +2 in summer time, +1 otherwise. EU rule: summer time runs from
+    01:00 UTC on the last Sunday of March to 01:00 UTC on the last Sunday of October."""
+    y = utc.year
+    start = datetime.datetime.combine(_last_sunday(y, 3), datetime.time(1, 0))
+    end = datetime.datetime.combine(_last_sunday(y, 10), datetime.time(1, 0))
+    return 2 if start <= utc.replace(tzinfo=None) < end else 1
+
+
+def to_cet(utc):
+    return utc.replace(tzinfo=None) + datetime.timedelta(hours=cet_offset(utc))
+
+
+def cet_to_utc(local):
+    for off in (2, 1):
+        utc = local - datetime.timedelta(hours=off)
+        if cet_offset(utc) == off:
+            return utc
+    return local - datetime.timedelta(hours=1)
+
+
+def eu_trading_day(market, d):
+    """(is_trading_day, reason) for a European market."""
+    m = EU_MARKETS[market]
+    if d.weekday() >= 5:
+        return False, "weekend"
+    iso = d.isoformat()
+    if iso in m["closed"]:
+        return False, "%s holiday: %s" % (m["name"], m["closed"][iso])
+    if iso in m["half"]:
+        return False, "%s early close (%s): closing time not announced, check %s" % (m["name"], m["half"][iso], m["name"])
+    return True, ""
+
+
+def eu_market_status(now_utc, market):
+    m = EU_MARKETS[market]
+    local = to_cet(now_utc)
+    d = local.date()
+    ok, reason = eu_trading_day(market, d)
+    st = {"market": market, "name": m["name"], "now_berlin": local.strftime("%Y-%m-%d %H:%M"), "date": d.isoformat(),
+          "weekday": local.strftime("%A"), "calendar_known": d.year in m["years"], "open": False, "reason": reason}
+    if ok:
+        st["opens"], st["closes"] = m["open"].strftime("%H:%M"), m["close"].strftime("%H:%M")
+        if m["open"] <= local.time() < m["close"]:
+            st["open"], st["reason"] = True, "regular session"
+        elif local.time() < m["open"]:
+            st["reason"] = "before the open"
+        else:
+            st["reason"] = "after the close"
+    nd = d if (ok and local.time() < m["open"]) else d + datetime.timedelta(days=1)
+    for _ in range(15):
+        if eu_trading_day(market, nd)[0]:
+            st["next_open"] = "%s %s" % (nd.isoformat(), m["open"].strftime("%H:%M"))
             break
         nd += datetime.timedelta(days=1)
     return st
@@ -432,6 +546,9 @@ def validate(rule):
     t = rule.get("type")
     if t not in PRICE_TYPES:
         raise AlertError("rule %s: unknown type %r" % (rule.get("id"), t))
+    if rule.get("market", "NYSE") not in MARKET_NAMES:
+        raise AlertError("rule %s: unknown market %r (use one of %s)" % (rule.get("id"), rule.get("market"),
+                                                                      ", ".join(MARKET_NAMES)))
     if t != "opening_bell" and not rule.get("symbol"):
         raise AlertError("rule %s needs a symbol" % rule.get("id"))
     if t in ("above", "below", "stop", "target") and not isinstance(rule.get("price"), (int, float)):
@@ -440,17 +557,38 @@ def validate(rule):
         raise AlertError("rule %s needs a numeric pct" % rule.get("id"))
 
 
-def evaluate(rules, quotes, status, state, now_utc):
+def evaluate(rules, quotes, status, state, now_utc, markets=None):
     """Pure function. Returns (rings, new_state). Each ring: {id, symbol, message}."""
     state = json.loads(json.dumps(state or {}))
     rung = state.setdefault("rung", {})
     today = status["date"]
     rings = []
+    markets = dict(markets or {})
+
+    def status_of(market):
+        """Status of one market now; the NYSE one is the `status` passed in."""
+        if market is None:
+            return {}
+        if market == "NYSE":
+            return status
+        if market not in markets:
+            markets[market] = eu_market_status(now_utc, market)
+        return markets[market]
+
     for r in rules:
         validate(r)
         rid = r.get("id") or "%s-%s" % (r.get("symbol", "market"), r["type"])
         typ = {"stop": "below", "target": "above"}.get(r["type"], r["type"])
         if typ == "opening_bell":
+            mk = r.get("market", "NYSE")
+            if mk != "NYSE":
+                st = status_of(mk)
+                day_key = st["date"]
+                if st["open"] and rung.get(rid, "")[:10] != day_key:
+                    rings.append({"id": rid, "symbol": "", "message": "Opening bell: %s is open (%s Berlin)."
+                                  % (st["name"], st["now_berlin"])})
+                    rung[rid] = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+                continue
             if status["open"] and rung.get(rid, "")[:10] != today:
                 rings.append({"id": rid, "symbol": "", "message": "Opening bell: the NYSE is open (%s New York)%s."
                               % (status["now_new_york"], (", early close at 1:00 p.m. today, "
@@ -468,7 +606,7 @@ def evaluate(rules, quotes, status, state, now_utc):
                 word = "at or above" if typ == "above" else "at or below"
                 label = {"stop": "stop", "target": "target"}.get(r["type"], typ)
                 rings.append({"id": rid, "symbol": sym, "message": "%s %s %s is %s your %s %s%s."
-                              % (sym, "is" if status["open"] else "last", money_text(p, q.get("currency")), word, label,
+                              % (sym, "is" if (status_of(market_for(sym)) or {}).get("open") else "last", money_text(p, q.get("currency")), word, label,
                                  money_text(r["price"], q.get("currency")),
                                  (" (" + r["note"] + ")") if r.get("note") else "")})
                 rung[rid] = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -516,21 +654,42 @@ def _dedupe(items):
     return out
 
 
-def cmd_clock(a):
-    st = market_status(parse_now(a.now))
-    if a.json:
-        print(json.dumps(st, indent=2))
-    else:
-        print("New York %s (%s): NYSE %s, %s." % (st["now_new_york"], st["weekday"],
-                                                  "OPEN" if st["open"] else "closed", st["reason"]))
+def _clock_lines(market, now_text):
+    """(open?, lines, json) for one market."""
+    if market == "NYSE":
+        st = market_status(parse_now(now_text))
+        lines = ["New York %s (%s): NYSE %s, %s." % (st["now_new_york"], st["weekday"],
+                                                    "OPEN" if st["open"] else "closed", st["reason"])]
         if st.get("opens"):
-            print("Today's session: %s to %s%s." % (st["opens"], st["closes"],
-                                                    (" (early close: %s)" % st["early_close"]) if st.get("early_close") else ""))
+            lines.append("Today's session: %s to %s%s." % (st["opens"], st["closes"],
+                         (" (early close: %s)" % st["early_close"]) if st.get("early_close") else ""))
         if not st["open"] and st.get("next_open"):
-            print("Next open: %s New York." % st["next_open"])
+            lines.append("Next open: %s New York." % st["next_open"])
         if not st["calendar_known"]:
-            print("Holiday list covers %s only: check nyse.com for this date." % " and ".join(map(str, CALENDAR_YEARS)))
-    return 0 if st["open"] else 1
+            lines.append("Holiday list covers %s only: check nyse.com for this date." % " and ".join(map(str, CALENDAR_YEARS)))
+        return st["open"], lines, st
+    st = eu_market_status(parse_now(now_text, market), market)
+    lines = ["Berlin %s (%s): %s %s, %s." % (st["now_berlin"], st["weekday"], st["name"],
+                                              "OPEN" if st["open"] else "closed", st["reason"])]
+    if st.get("opens"):
+        lines.append("Today's session: %s to %s Berlin time." % (st["opens"], st["closes"]))
+    if not st["open"] and st.get("next_open"):
+        lines.append("Next open: %s Berlin." % st["next_open"])
+    if not st["calendar_known"]:
+        lines.append("The %s holiday list covers %s only: check the exchange's calendar for this date."
+                     % (st["name"], " and ".join(map(str, EU_MARKETS[market]["years"]))))
+    return st["open"], lines, st
+
+
+def cmd_clock(a):
+    names = [a.market] if a.market else MARKET_NAMES
+    results = [(m,) + _clock_lines(m, a.now) for m in names]
+    if a.json:
+        print(json.dumps({m: st for m, _, _, st in results}, indent=2))
+    else:
+        for _, _, lines, _ in results:
+            print("\n".join(lines))
+    return 0 if any(o for _, o, _, _ in results) else 1
 
 
 def cmd_quote(a):
@@ -589,6 +748,14 @@ def cmd_check(a):
     else:
         print("NYSE %s (%s New York, %s)." % ("OPEN" if status["open"] else "closed", status["now_new_york"],
                                               status["reason"]))
+        watched = {market_for(sy) for sy in syms} | {r.get("market") for r in rules if r.get("type") == "opening_bell"}
+        for mk in sorted(m_ for m_ in watched if m_ in EU_MARKETS):
+            est = eu_market_status(now, mk)
+            print("%s %s (%s Berlin, %s)." % (est["name"], "OPEN" if est["open"] else "closed", est["now_berlin"],
+                                              est["reason"]))
+        for sy in syms:
+            if market_for(sy) is None:
+                print("note: no market clock is built for %s; check its exchange's hours." % sy)
         for r in rings:
             print("ALERT " + r["message"])
         if not rings:
@@ -605,7 +772,10 @@ def cmd_add(a):
     doc = _read(a.rules, {"rules": []})
     doc.setdefault("rules", [])
     if a.opening_bell:
-        rule = {"id": a.id or "opening-bell", "type": "opening_bell"}
+        rule = {"id": a.id or ("opening-bell" if a.market == "NYSE" else "opening-bell-" + a.market.lower()),
+                "type": "opening_bell"}
+        if a.market != "NYSE":
+            rule["market"] = a.market
     else:
         if not a.symbol:
             raise AlertError("--symbol is required (or --opening-bell)")
@@ -676,8 +846,9 @@ def main(argv=None):
         p.add_argument("--fx-date", metavar="YYYY-MM-DD", help="the day you read the rate (at most %d days old)"
                        % MAX_FX_AGE_DAYS)
 
-    p = sub.add_parser("clock", help="is the NYSE open?")
-    p.add_argument("--now")
+    p = sub.add_parser("clock", help="are the markets open? (NYSE, Xetra, Euronext)")
+    p.add_argument("--market", choices=MARKET_NAMES, help="one market only (default: all three)")
+    p.add_argument("--now", help="pretend it is this time (ISO; no offset = that market's local time)")
     p.add_argument("--json", action="store_true")
     p = sub.add_parser("quote", help="latest delayed quotes")
     net(p)
@@ -702,6 +873,7 @@ def main(argv=None):
     g.add_argument("--stop", type=float)
     g.add_argument("--pct", type=float)
     g.add_argument("--opening-bell", action="store_true")
+    p.add_argument("--market", choices=MARKET_NAMES, default="NYSE", help="which market an opening bell watches")
     p.add_argument("--direction", choices=["up", "down"])
     p.add_argument("--rearm", action="store_true")
     p.add_argument("--note")

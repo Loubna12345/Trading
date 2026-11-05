@@ -224,8 +224,8 @@ class Cli(unittest.TestCase):
         self.assertEqual(sorted(json.loads(text)["quotes"]), ["AAPL", "AXP", "BAC", "GOOGL", "KO"])
 
     def test_clock_exit_codes(self):
-        self.assertEqual(run(["clock", "--now", "2026-10-13T10:00"])[0], 0)
-        code, text, _ = run(["clock", "--now", "2026-12-25T10:00"])
+        self.assertEqual(run(["clock", "--market", "NYSE", "--now", "2026-10-13T10:00"])[0], 0)
+        code, text, _ = run(["clock", "--market", "NYSE", "--now", "2026-12-25T10:00"])
         self.assertEqual(code, 1)
         self.assertIn("Christmas Day", text)
 

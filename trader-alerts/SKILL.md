@@ -3,10 +3,11 @@ name: trader-alerts
 description: >-
   Price Alerts. Rings when a price target, a stop or the opening bell hits:
   above / below / stop rules, percent moves from the previous close, and the
-  NYSE opening bell, each ringing once so you are not spammed. Knows NYSE
-  hours with the 2026 and 2027 holidays and 1:00 p.m. early closes, fetches
-  free delayed quotes (Yahoo chart JSON, Stooq CSV) one ticker at a time, and
-  writes trader/prices.json for the other skills. Use when the user says
+  opening bells for Xetra, Euronext and the NYSE, each ringing once so you
+  are not spammed. Knows the hours and holidays of all three, fetches free
+  delayed quotes (Yahoo chart JSON, Stooq CSV) one ticker at a time, and
+  writes trader/prices.json in euro (dollar and pound prices are converted
+  with an exchange rate the user states, with its date) for the other skills. Use when the user says
   "alert me when", "tell me if AAPL hits", "set a stop", "price target",
   "watch my stocks", "is the market open", "when does the market open",
   "get me prices", or to refresh prices before sizing, risk or tax.
@@ -22,13 +23,14 @@ wants to act, the normal path runs (size, risk, their yes).
 `${CLAUDE_SKILL_DIR}` below is this skill's folder (where this SKILL.md lives).
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/alerts.py" clock                         # NYSE open or closed, next open
-python3 "${CLAUDE_SKILL_DIR}/alerts.py" quote AAPL KO --write         # -> trader/prices.json
-python3 "${CLAUDE_SKILL_DIR}/alerts.py" quote --holdings --write      # portfolio + targets tickers
+python3 "${CLAUDE_SKILL_DIR}/alerts.py" clock                         # Xetra, Euronext and NYSE: open or closed, next open
+python3 "${CLAUDE_SKILL_DIR}/alerts.py" clock --market XETRA          # one market; a time without an offset is Berlin time
+python3 "${CLAUDE_SKILL_DIR}/alerts.py" quote SAP.DE KO --fx USD=1.08 --fx-date 2026-11-05 --write   # -> trader/prices.json in euro
+python3 "${CLAUDE_SKILL_DIR}/alerts.py" quote --holdings --fx USD=1.08 --fx-date 2026-11-05 --write
 python3 "${CLAUDE_SKILL_DIR}/alerts.py" add --symbol AAPL --above 350
 python3 "${CLAUDE_SKILL_DIR}/alerts.py" add --symbol BAC --stop 50 --note "my stop"
 python3 "${CLAUDE_SKILL_DIR}/alerts.py" add --symbol KO --pct 3
-python3 "${CLAUDE_SKILL_DIR}/alerts.py" add --opening-bell
+python3 "${CLAUDE_SKILL_DIR}/alerts.py" add --opening-bell --market XETRA
 python3 "${CLAUDE_SKILL_DIR}/alerts.py" check                         # exit 0 = something rang
 python3 "${CLAUDE_SKILL_DIR}/alerts.py" list
 python3 "${CLAUDE_SKILL_DIR}/alerts.py" reset aapl-above-350
@@ -49,7 +51,7 @@ python3 "${CLAUDE_SKILL_DIR}/alerts.py" reset aapl-above-350
 | `above` | price at or above `price` | after `reset`, or on its own if `"rearm": true` and the price fell back |
 | `below` / `stop` | price at or below `price` | same |
 | `pct_move` | moved `pct` percent from the previous close (or `ref`), optional `direction` up or down | once per day at most |
-| `opening_bell` | the NYSE is open | once per trading day |
+| `opening_bell` | the market (`market`: NYSE, XETRA or EURONEXT) is open | once per trading day |
 
 ## Quotes
 
@@ -63,6 +65,47 @@ python3 "${CLAUDE_SKILL_DIR}/alerts.py" reset aapl-above-350
 - If both are down, read prices from the broker connector (Alpaca
   `get_stock_snapshot`, IBKR `get_price_snapshot`) and write them into
   `trader/prices.json` as `{"as_of": "...", "prices": {"AAPL": 341.27}}`.
+
+## Euro prices and the exchange rate
+
+`trader/prices.json` is in euro, because every limit and size in this pack is
+in euro. Dollar prices are divided by an exchange rate the user states:
+
+- `--fx USD=1.08` means one euro buys 1.08 dollars, the way the European
+  Central Bank quotes it. Read it from the ECB's euro reference rates the same
+  day and pass its date with `--fx-date`.
+- A rate older than 3 days, dated in the future, or missing for a dollar or
+  pound stock means that stock is **not written** to prices.json and the tool
+  says why. Nothing is guessed. London prices quoted in pence are divided by 100.
+- prices.json keeps the original price, currency, rate and date for each stock
+  (`detail`), and trader-risk refuses to size a share order from a price that is
+  not marked as euro.
+- Alert levels stay in the stock's own currency: "SAP.DE above 140" is
+  euro, "KO above 95" is dollars. The tool prints the symbol.
+- The rate is the ECB's reference, not the rate your broker applies when it
+  converts your euro. Expect a small difference, which is the broker's fee.
+
+Tickers: Yahoo's exchange suffix goes on the ticker. `SAP.DE` Xetra,
+`MC.PA` Paris, `ASML.AS` Amsterdam, `ENI.MI` Milan, `SHEL.L` London. US share
+classes keep the dash: `BRK-B`. Stooq works for US tickers and Xetra only.
+
+## The Xetra and Euronext clocks
+
+- **Xetra**: Monday to Friday 9:00 to 17:30 Berlin time. Closed on Jan 1, Good
+  Friday, Easter Monday, May 1, Dec 24, Dec 25 and Dec 31. The calendar says
+  it trades normally on Ascension Day, Whit Monday and Corpus Christi in 2026
+  (Deutsche Boerse's calendar, read 2026-11-05). The tool has 2026 and 2027;
+  for any other year it says the list is unknown.
+- **Euronext** (Paris, Amsterdam, Brussels, Lisbon, Milan): the usual session is
+  9:00 to 17:30, but Euronext's page did not state the hours, so that is
+  unconfirmed. 2026 closed days: Jan 1, Apr 3, Apr 6, May 1, Dec 25. On Dec 24
+  and Dec 31, 2026 the closing time is "to be announced", so the tool shows
+  those days as closed. Only 2026 is published; for 2027 it says so. Dublin
+  and Oslo have extra closed days, so `.IR` and `.OL` have no clock.
+- London, Swiss, Nordic and Spanish tickers have no clock here. The tool says
+  so; check the exchange.
+- Summer time is worked out in the tool (last Sunday of March to last Sunday
+  of October), so it needs no time zone files.
 
 ## The NYSE clock
 

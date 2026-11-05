@@ -185,5 +185,106 @@ class RiskCountsInEuro(unittest.TestCase):
         self.assertEqual(verdict(o, None)[0], "PASS")
 
 
+def at(text):
+    return alerts.parse_now(text)
+
+
+class EuropeanClocks(unittest.TestCase):
+    # Closed days: Deutsche Boerse trading calendar (cashmarket.deutsche-boerse.com, read 2026-11-05)
+    XETRA_CLOSED = ["2026-01-01", "2026-04-03", "2026-04-06", "2026-05-01", "2026-12-24", "2026-12-25", "2026-12-31",
+                    "2027-01-01", "2027-03-26", "2027-03-29", "2027-12-24", "2027-12-31"]
+
+    def test_xetra_closed_days(self):
+        for d in self.XETRA_CLOSED:
+            day = alerts.datetime.date.fromisoformat(d)
+            with self.subTest(d=d):
+                self.assertFalse(alerts.eu_trading_day("XETRA", day)[0])
+
+    def test_xetra_trades_on_german_holidays_it_does_not_close_for(self):
+        # Deutsche Boerse says regular trading on Ascension Day, Whit Monday, Corpus Christi (2026) and Dec 28.
+        for d in ("2026-05-14", "2026-05-25", "2026-06-04", "2026-12-28"):
+            with self.subTest(d=d):
+                self.assertTrue(alerts.eu_trading_day("XETRA", alerts.datetime.date.fromisoformat(d))[0])
+
+    def test_weekend_is_closed(self):
+        self.assertFalse(alerts.eu_trading_day("XETRA", alerts.datetime.date(2026, 10, 17))[0])
+
+    def test_xetra_hours_in_summer_time(self):  # CEST = UTC+2
+        self.assertFalse(alerts.eu_market_status(at("2026-10-13T06:59Z"), "XETRA")["open"])   # 08:59
+        self.assertTrue(alerts.eu_market_status(at("2026-10-13T07:00Z"), "XETRA")["open"])    # 09:00
+        self.assertTrue(alerts.eu_market_status(at("2026-10-13T15:29Z"), "XETRA")["open"])    # 17:29
+        self.assertFalse(alerts.eu_market_status(at("2026-10-13T15:30Z"), "XETRA")["open"])   # 17:30
+
+    def test_xetra_hours_in_winter_time(self):  # CET = UTC+1
+        self.assertFalse(alerts.eu_market_status(at("2026-11-05T07:59Z"), "XETRA")["open"])
+        self.assertTrue(alerts.eu_market_status(at("2026-11-05T08:00Z"), "XETRA")["open"])
+        self.assertFalse(alerts.eu_market_status(at("2026-11-05T16:30Z"), "XETRA")["open"])
+
+    def test_the_clocks_change_on_the_last_sunday_of_march_and_october(self):
+        self.assertEqual(alerts.cet_offset(at("2026-03-29T00:59Z")), 1)
+        self.assertEqual(alerts.cet_offset(at("2026-03-29T01:00Z")), 2)
+        self.assertEqual(alerts.cet_offset(at("2026-10-25T00:59Z")), 2)
+        self.assertEqual(alerts.cet_offset(at("2026-10-25T01:00Z")), 1)
+        # Monday after the autumn change: 09:00 CET is 08:00 UTC
+        self.assertFalse(alerts.eu_market_status(at("2026-10-26T07:59Z"), "XETRA")["open"])
+        self.assertTrue(alerts.eu_market_status(at("2026-10-26T08:00Z"), "XETRA")["open"])
+
+    def test_a_time_without_an_offset_is_local_to_the_market(self):
+        self.assertTrue(alerts.eu_market_status(alerts.parse_now("2026-10-13T09:00", "XETRA"), "XETRA")["open"])
+        self.assertFalse(alerts.eu_market_status(alerts.parse_now("2026-10-13T08:59", "XETRA"), "XETRA")["open"])
+
+    def test_next_open_skips_the_weekend_and_holidays(self):
+        st = alerts.eu_market_status(at("2026-04-02T16:00Z"), "XETRA")  # Thursday evening before Good Friday
+        self.assertEqual(st["next_open"], "2026-04-07 09:00")
+
+    def test_euronext_2026_and_the_unpublished_2027(self):
+        for d in ("2026-01-01", "2026-04-03", "2026-04-06", "2026-05-01", "2026-12-25"):
+            self.assertFalse(alerts.eu_trading_day("EURONEXT", alerts.datetime.date.fromisoformat(d))[0], d)
+        self.assertTrue(alerts.eu_market_status(at("2026-12-28T10:00Z"), "EURONEXT")["open"])
+        self.assertTrue(alerts.eu_market_status(at("2026-10-13T10:00Z"), "EURONEXT")["calendar_known"])
+        self.assertFalse(alerts.eu_market_status(at("2027-03-01T10:00Z"), "EURONEXT")["calendar_known"])
+
+    def test_euronext_half_days_have_no_announced_hours_so_they_count_as_closed(self):
+        st = alerts.eu_market_status(at("2026-12-24T10:00Z"), "EURONEXT")
+        self.assertFalse(st["open"])
+        self.assertIn("early close", st["reason"])
+
+    def test_which_market_a_ticker_trades_on(self):
+        self.assertEqual(alerts.market_for("KO"), "NYSE")
+        self.assertEqual(alerts.market_for("BRK.B"), "NYSE")
+        self.assertEqual(alerts.market_for("SAP.DE"), "XETRA")
+        self.assertEqual(alerts.market_for("MC.PA"), "EURONEXT")
+        self.assertEqual(alerts.market_for("ASML.AS"), "EURONEXT")
+        self.assertIsNone(alerts.market_for("SHEL.L"))  # no clock built for London
+
+    def test_clock_command_lists_the_markets(self):
+        code, out, _ = run(["clock", "--now", "2026-10-13T10:00Z"])
+        self.assertIn("Xetra", out)
+        self.assertIn("Euronext", out)
+        self.assertIn("NYSE", out)
+        code, out, _ = run(["clock", "--market", "XETRA", "--now", "2026-10-13T10:00Z"])
+        self.assertEqual(code, 0)
+        self.assertIn("Berlin", out)
+        self.assertEqual(run(["clock", "--market", "XETRA", "--now", "2026-12-25T10:00Z"])[0], 1)
+
+    def test_opening_bell_for_xetra_rings_once_a_day(self):
+        rule = [{"id": "xetra-bell", "type": "opening_bell", "market": "XETRA"}]
+        now = at("2026-10-13T07:05Z")
+        markets = {"XETRA": alerts.eu_market_status(now, "XETRA")}
+        rings, st = alerts.evaluate(rule, {}, alerts.market_status(now), {}, now, markets=markets)
+        self.assertEqual(len(rings), 1)
+        self.assertIn("Xetra", rings[0]["message"])
+        rings, st = alerts.evaluate(rule, {}, alerts.market_status(now), st, now, markets=markets)
+        self.assertEqual(rings, [])
+
+    def test_alert_prices_are_shown_in_their_own_currency(self):
+        q, _ = alerts.get_quotes(["SAP.DE"], "yahoo", QDIR)
+        now = at("2026-10-13T08:00Z")
+        rules = [{"id": "sap", "symbol": "SAP.DE", "type": "above", "price": 140}]
+        rings, _ = alerts.evaluate(rules, q, alerts.market_status(now), {}, now)
+        self.assertIn("SAP.DE is €142.30", rings[0]["message"])
+        self.assertIn("€140.00", rings[0]["message"])
+
+
 if __name__ == "__main__":
     unittest.main()
