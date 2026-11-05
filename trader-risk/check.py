@@ -45,7 +45,7 @@ DEFAULTS = {
     "budget": None, "cash_buffer_pct": 10, "max_position_pct": 25, "max_order_eur": 2000,
     "min_order_eur": 5, "max_orders_per_day": 10, "paper": True, "blocked": [],
     "allow_options": False, "allow_margin": False, "allow_short": False,
-    "max_price_age_hours": 72,
+    "max_price_age_hours": 72, "currency": "EUR",
 }
 ALPACA_FIELDS = ("symbol", "side", "qty", "notional", "type", "time_in_force", "limit_price",
                  "stop_price", "trail_price", "trail_percent", "extended_hours", "client_order_id",
@@ -147,7 +147,19 @@ def placed_today(state, today):
     return out
 
 
-def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, price_times=None, now=None):
+def native_to_base(meta, base):
+    """Multiply a price in the stock's own currency by this to get the base currency.
+    None when prices.json does not say (fail closed)."""
+    if not isinstance(meta, dict) or meta.get("price_currency") != base:
+        return None
+    rate = _f(meta.get("fx_rate"))
+    if rate is None or rate <= 0:
+        return None
+    return (0.01 if meta.get("native_currency") in ("GBp", "GBX") else 1.0) / rate
+
+
+def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, price_times=None, now=None,
+          price_meta=None):
     """Pure function. Returns {"results": [...], "pass": n, "block": n, "warnings": [...]}."""
     c = dict(DEFAULTS)
     c.update(cfg or {})
@@ -155,6 +167,8 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, pric
     today = today or datetime.date.today().isoformat()
     now = now or datetime.datetime.now(datetime.timezone.utc)
     price_times = price_times or {}
+    price_meta = {str(k).upper(): v for k, v in (price_meta or {}).items()}
+    base = str(c.get("currency") or "EUR").upper()
     max_age = float(c.get("max_price_age_hours") or 0)
     acct, top_warn = account(c, portfolio, prices)
     blocked = {str(b).upper() for b in c.get("blocked") or []}
@@ -233,9 +247,24 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, pric
         elif typ == "stop":
             ref = _f(o.get("stop_price"))
         price_used = False
-        if ref is None:
+        if ref is not None and notional is None and qty is not None:
+            # a limit or stop price is in the stock's own currency: bring it to the base currency
+            factor = native_to_base(price_meta.get(sym), base)
+            if factor is None:
+                reasons.append("currency: prices.json does not say what currency the %s price is in, so the limit "
+                               "price cannot be converted to %s; refresh it with a stated rate "
+                               "(trader-alerts: alerts.py quote %s --write --fx USD=RATE --fx-date DATE)"
+                               % (sym, base, sym))
+                ref = None
+            else:
+                ref = ref * factor
+        elif ref is None:
             ref = prices.get(sym)
             price_used = ref is not None and notional is None  # only orders SIZED from a price need it fresh
+            if price_used and (price_meta.get(sym) or {}).get("price_currency") != base:
+                reasons.append("currency: the %s price is not in %s (prices.json says %s); refresh it with a stated "
+                               "rate (trader-alerts: alerts.py quote %s --write --fx USD=RATE --fx-date DATE)"
+                               % (sym, base, (price_meta.get(sym) or {}).get("price_currency") or "nothing", sym))
         if price_used and max_age:
             stamp = _parse_time(price_times.get(sym))
             if stamp is None:
@@ -399,7 +428,7 @@ def main(argv=None):
         state = read_json(a.state, "broker state", required=False)
         detail = pdoc.get("detail") if isinstance(pdoc.get("detail"), dict) else {}
         times = {str(t).upper(): (detail.get(t) or {}).get("fetched_at") or pdoc.get("as_of") for t in prices}
-        res = check(orders, cfg, portfolio, prices, state, a.today, price_times=times)
+        res = check(orders, cfg, portfolio, prices, state, a.today, price_times=times, price_meta=detail)
         if pdoc.get("as_of"):
             res["prices_as_of"] = pdoc["as_of"]
         if not a.no_write:

@@ -170,7 +170,7 @@ class Cli(unittest.TestCase):
 
     def check(self, now):
         return run(["check", "--rules", self.rules, "--state", self.state, "--prices-out", self.prices,
-                    "--offline", QDIR, "--now", now])
+                    "--offline", QDIR, "--now", now, "--fx", "USD=1.25", "--fx-date", "2026-10-13"])
 
     def test_the_reel_portfolio_evening_and_morning(self):
         for args in (["--opening-bell"], ["--symbol", "AAPL", "--above", "350"], ["--symbol", "BAC", "--stop", "50"]):
@@ -185,7 +185,10 @@ class Cli(unittest.TestCase):
         self.assertIn("Nothing hit", text)
         with open(self.prices) as fh:
             doc = json.load(fh)
-        self.assertEqual(doc["prices"], {"AAPL": 341.27, "BAC": 53.96})
+        self.assertEqual(sorted(doc["prices"]), ["AAPL", "BAC"])
+        self.assertAlmostEqual(doc["prices"]["AAPL"], 341.27 / 1.25, places=4)  # prices.json is in euro
+        self.assertAlmostEqual(doc["prices"]["BAC"], 53.96 / 1.25, places=4)
+        self.assertEqual(doc["currency"], "EUR")
 
         code, text, _ = self.check("2026-10-14T09:31")
         self.assertEqual(code, 0)
@@ -200,15 +203,16 @@ class Cli(unittest.TestCase):
         self.assertEqual(run(["reset", "opening-bell", "--state", self.state])[0], 1)
 
     def test_quote_write_merges(self):
+        fx = ["--fx", "USD=1.25", "--fx-date", "2026-10-13"]
         code, text, _ = run(["quote", "AAPL", "KO", "--offline", QDIR, "--write", self.prices,
-                             "--now", "2026-10-13T20:00:01Z"])
+                             "--now", "2026-10-13T20:00:01Z"] + fx)
         self.assertEqual(code, 0)
-        self.assertIn("AAPL   $341.27", text)
-        run(["quote", "BAC", "--offline", QDIR, "--write", self.prices])
+        self.assertIn("AAPL     $341.27  = €273.02", text)
+        run(["quote", "BAC", "--offline", QDIR, "--write", self.prices, "--now", "2026-10-13T20:05:00Z"] + fx)
         with open(self.prices) as fh:
             doc = json.load(fh)
         self.assertEqual(sorted(doc["prices"]), ["AAPL", "BAC", "KO"])
-        self.assertEqual(doc["detail"]["KO"]["prev_close"], 89.79)
+        self.assertAlmostEqual(doc["detail"]["KO"]["prev_close"], 89.79 / 1.25, places=4)
 
     def test_quote_holdings(self):
         pf = os.path.join(self.d, "portfolio.json")

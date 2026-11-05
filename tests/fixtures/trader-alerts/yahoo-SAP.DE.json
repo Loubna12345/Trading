@@ -1,0 +1,97 @@
+{
+  "chart": {
+    "result": [
+      {
+        "meta": {
+          "currency": "EUR",
+          "symbol": "SAP.DE",
+          "exchangeName": "GER",
+          "fullExchangeName": "XETRA",
+          "instrumentType": "EQUITY",
+          "firstTradeDate": -252322200,
+          "regularMarketTime": 1791921602,
+          "hasPrePostMarketData": true,
+          "gmtoffset": 3600,
+          "timezone": "CET",
+          "exchangeTimezoneName": "Europe/Berlin",
+          "regularMarketPrice": 142.3,
+          "regularMarketDayHigh": 143.723,
+          "regularMarketDayLow": 140.877,
+          "regularMarketVolume": 15313783,
+          "longName": "The Coca-Cola Company",
+          "shortName": "Coca-Cola Company (The)",
+          "chartPreviousClose": 141.1,
+          "priceHint": 2,
+          "currentTradingPeriod": {
+            "pre": {
+              "timezone": "EDT",
+              "end": 1791898200,
+              "start": 1791878400,
+              "gmtoffset": -14400
+            },
+            "regular": {
+              "timezone": "EDT",
+              "end": 1791921600,
+              "start": 1791898200,
+              "gmtoffset": -14400
+            },
+            "post": {
+              "timezone": "EDT",
+              "end": 1791936000,
+              "start": 1791921600,
+              "gmtoffset": -14400
+            }
+          },
+          "dataGranularity": "1d",
+          "range": "1d",
+          "validRanges": [
+            "1d",
+            "5d",
+            "1mo",
+            "3mo",
+            "6mo",
+            "1y",
+            "2y",
+            "5y",
+            "10y",
+            "ytd",
+            "max"
+          ],
+          "previousClose": 141.1
+        },
+        "timestamp": [
+          1791898200
+        ],
+        "indicators": {
+          "quote": [
+            {
+              "close": [
+                90.11000061035156
+              ],
+              "volume": [
+                15313000
+              ],
+              "high": [
+                90.55999755859375
+              ],
+              "open": [
+                90.55999755859375
+              ],
+              "low": [
+                89.66999816894531
+              ]
+            }
+          ],
+          "adjclose": [
+            {
+              "adjclose": [
+                90.11000061035156
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "error": null
+  }
+}

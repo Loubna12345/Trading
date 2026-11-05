@@ -40,6 +40,7 @@ import csv
 import datetime
 import io
 import json
+import math
 import os
 import sys
 import time
@@ -179,13 +180,34 @@ def market_status(now_utc):
 
 # ---------------------------------------------------------------- quotes
 
+# Yahoo exchange suffixes for the European markets this pack knows about.
+EXCHANGE_SUFFIXES = {"DE": "Xetra", "PA": "Euronext Paris", "AS": "Euronext Amsterdam", "BR": "Euronext Brussels",
+                     "LS": "Euronext Lisbon", "IR": "Euronext Dublin", "MI": "Borsa Italiana", "MC": "Bolsa de Madrid",
+                     "HE": "Nasdaq Helsinki", "VI": "Wiener Boerse", "L": "London", "SW": "SIX Swiss",
+                     "ST": "Nasdaq Stockholm", "CO": "Nasdaq Copenhagen", "OL": "Oslo Bors"}
+
+
+def exchange_suffix(sym):
+    """'SAP.DE' -> 'DE'. US share classes like 'BRK.B' have no exchange suffix -> None."""
+    base, dot, suf = str(sym).upper().rpartition(".")
+    return suf if dot and base and suf in EXCHANGE_SUFFIXES else None
+
+
 def stooq_url(sym):
+    sym = sym.upper()
+    suf = exchange_suffix(sym)
+    if suf == "DE":
+        return "https://stooq.com/q/l/?s=%s&f=sd2t2ohlcv&h&e=csv" % sym.lower()
+    if suf:
+        raise AlertError("Stooq is only wired for US tickers and Xetra (.DE) here; use --source yahoo for %s" % sym)
     return "https://stooq.com/q/l/?s=%s.us&f=sd2t2ohlcv&h&e=csv" % sym.lower().replace(".", "-")
 
 
 def yahoo_url(sym):
-    return "https://query1.finance.yahoo.com/v8/finance/chart/%s?range=1d&interval=1d" % (
-        sym.upper().replace(".", "-"))
+    sym = sym.upper()
+    if not exchange_suffix(sym):
+        sym = sym.replace(".", "-")
+    return "https://query1.finance.yahoo.com/v8/finance/chart/%s?range=1d&interval=1d" % sym
 
 
 def parse_stooq(text, sym):
@@ -206,7 +228,7 @@ def parse_stooq(text, sym):
             return None
     return {"symbol": sym.upper(), "price": float(close), "open": f("open"), "high": f("high"),
             "low": f("low"), "prev_close": None, "time": ("%s %s" % (r.get("date", ""), r.get("time", ""))).strip(),
-            "source": "stooq"}
+            "currency": "EUR" if exchange_suffix(sym) == "DE" else "USD", "source": "stooq"}
 
 
 def parse_yahoo(text, sym):
@@ -267,6 +289,94 @@ def get_quotes(symbols, source="yahoo", offline=None, pause=PAUSE):
     return quotes, errors
 
 
+# ---------------------------------------------------------------- euro conversion
+
+BASE = "EUR"
+MAX_FX_AGE_DAYS = 3
+PENCE = {"GBp": "GBP", "GBX": "GBP"}  # London quotes in pence
+
+
+def parse_fx(specs, base=BASE):
+    """['USD=1.08'] -> {'USD': 1.08}. The rate is how many USD one EUR buys (the ECB's way of quoting)."""
+    rates = {}
+    for spec in specs or []:
+        cur, eq, val = str(spec).partition("=")
+        cur = cur.strip().upper()
+        if not eq or len(cur) != 3 or not cur.isalpha():
+            raise AlertError("--fx wants CUR=RATE like USD=1.08 (one euro buys 1.08 dollars), got %r" % spec)
+        if cur == base:
+            raise AlertError("--fx %s: the base currency needs no rate" % cur)
+        try:
+            rate = float(val)
+        except ValueError:
+            raise AlertError("--fx %s: %r is not a number" % (cur, val))
+        if not math.isfinite(rate) or rate <= 0:
+            raise AlertError("--fx %s: the rate must be a positive number, got %r" % (cur, val))
+        rates[cur] = rate
+    return rates
+
+
+def check_fx_date(fx_date, now_utc):
+    """The rate's date, or an AlertError if it is missing, not a date, in the future or too old."""
+    try:
+        d = datetime.date.fromisoformat(str(fx_date)[:10])
+    except (TypeError, ValueError):
+        raise AlertError("give the date of the exchange rate: --fx-date YYYY-MM-DD (the day you read it)")
+    age = (now_utc.date() - d).days
+    if age < 0:
+        raise AlertError("--fx-date %s is in the future" % d)
+    if age > MAX_FX_AGE_DAYS:
+        raise AlertError("the exchange rate is from %s, %d days old (limit %d): read a fresh one"
+                         % (d, age, MAX_FX_AGE_DAYS))
+    return d.isoformat()
+
+
+def convert_quotes(quotes, fx, fx_date, now_utc, base=BASE):
+    """Quotes in their own currency -> quotes priced in `base`. Returns (converted, errors).
+
+    A quote is dropped, with a reason, if its currency is unknown, has no rate, or the rate is stale.
+    Nothing is guessed. Quotes already in `base` need no rate."""
+    out, errors = {}, []
+    fx_checked = None
+    for sym, q in quotes.items():
+        cur = q.get("currency")
+        if not cur:
+            errors.append("%s: the quote has no currency, so it cannot be converted to %s" % (sym, base))
+            continue
+        scale = 1.0
+        if cur in PENCE:
+            cur, scale = PENCE[cur], 0.01
+        if cur == base:
+            rate = 1.0
+            used_date = None
+        else:
+            if cur not in (fx or {}):
+                errors.append("%s is priced in %s: give --fx %s=RATE (one euro buys RATE %s)" % (sym, cur, cur, cur))
+                continue
+            try:
+                if fx_checked is None:
+                    fx_checked = check_fx_date(fx_date, now_utc)
+            except AlertError as e:
+                errors.append("%s: %s" % (sym, e))
+                continue
+            rate, used_date = fx[cur], fx_checked
+        c = dict(q)
+        c["native_price"] = q["price"]
+        c["price"] = q["price"] * scale / rate
+        if q.get("prev_close"):
+            c["prev_close"] = q["prev_close"] * scale / rate
+        c["price_currency"] = base
+        c["fx_rate"] = rate
+        c["fx_date"] = used_date
+        out[sym] = c
+    return out, errors
+
+
+def money_text(x, cur):
+    sym = {"USD": "$", "EUR": "€", "GBP": "£"}.get(cur)
+    return "%s%.2f" % (sym, x) if sym else "%.2f %s" % (x, cur or "?")
+
+
 def write_prices(path, quotes, now_utc, source):
     old = {}
     if os.path.exists(path):
@@ -281,12 +391,14 @@ def write_prices(path, quotes, now_utc, source):
     for s, q in quotes.items():
         prices[s] = q["price"]
         detail[s] = {"prev_close": q.get("prev_close"), "time": q.get("time"), "source": q.get("source"),
-                     "fetched_at": stamp}
+                     "fetched_at": stamp, "price_currency": q.get("price_currency"),
+                     "native_price": q.get("native_price"), "native_currency": q.get("currency"),
+                     "fx_rate": q.get("fx_rate"), "fx_date": q.get("fx_date")}
     # as_of is the OLDEST price in the file, never the time of the latest write
     old_asof = old.get("as_of")
     as_of = min(((detail.get(s) or {}).get("fetched_at") or old_asof or stamp) for s in prices)
-    doc = {"as_of": as_of, "source": source,
-           "note": "Delayed quotes for alerts and sizing checks. Your broker's price is the one that fills.",
+    doc = {"as_of": as_of, "source": source, "currency": BASE,
+           "note": "Delayed quotes for alerts and sizing checks, in euro. Your broker's price is the one that fills.",
            "prices": prices, "detail": detail}
     _write(path, doc)
     return doc
@@ -355,8 +467,9 @@ def evaluate(rules, quotes, status, state, now_utc):
             if hit and rid not in rung:
                 word = "at or above" if typ == "above" else "at or below"
                 label = {"stop": "stop", "target": "target"}.get(r["type"], typ)
-                rings.append({"id": rid, "symbol": sym, "message": "%s %s $%.2f is %s your %s $%s%s."
-                              % (sym, "is" if status["open"] else "last", p, word, label, _n(r["price"]),
+                rings.append({"id": rid, "symbol": sym, "message": "%s %s %s is %s your %s %s%s."
+                              % (sym, "is" if status["open"] else "last", money_text(p, q.get("currency")), word, label,
+                                 money_text(r["price"], q.get("currency")),
                                  (" (" + r["note"] + ")") if r.get("note") else "")})
                 rung[rid] = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
             elif not hit and rid in rung and r.get("rearm"):
@@ -369,8 +482,9 @@ def evaluate(rules, quotes, status, state, now_utc):
             want = r.get("direction")
             hit = abs(move) >= r["pct"] and (not want or (want == "up") == (move > 0))
             if hit and rung.get(rid, "")[:10] != today:
-                rings.append({"id": rid, "symbol": sym, "message": "%s moved %+.2f%% to $%.2f (from $%.2f)."
-                              % (sym, move, p, float(ref))})
+                rings.append({"id": rid, "symbol": sym, "message": "%s moved %+.2f%% to %s (from %s)."
+                              % (sym, move, money_text(p, q.get("currency")),
+                                 money_text(float(ref), q.get("currency")))})
                 rung[rid] = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
     state["last_check"] = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
     return rings, state
@@ -425,22 +539,29 @@ def cmd_quote(a):
         raise AlertError("which tickers? alerts.py quote AAPL KO, or --holdings")
     now = parse_now(a.now)
     quotes, errors = get_quotes(syms, a.source, a.offline)
-    if a.write and quotes:
-        write_prices(a.write, quotes, now, a.source)
+    euro, fx_errors = convert_quotes(quotes, parse_fx(a.fx), a.fx_date, now)
+    errors = errors + fx_errors
+    if a.write and euro:
+        write_prices(a.write, euro, now, a.source)
     if a.json:
-        print(json.dumps({"quotes": quotes, "errors": errors}, indent=2))
+        print(json.dumps({"quotes": quotes, "prices_eur": {s_: q["price"] for s_, q in euro.items()},
+                          "errors": errors}, indent=2))
     else:
         for s in syms:
             q = quotes.get(s)
             if q:
                 chg = ""
                 if q.get("prev_close"):
-                    chg = " (%+.2f%% vs prev close $%.2f)" % (100.0 * (q["price"] / q["prev_close"] - 1), q["prev_close"])
-                print("%-6s $%.2f%s  %s  [%s]" % (s, q["price"], chg, q.get("time", ""), q["source"]))
+                    chg = " (%+.2f%% vs prev close %s)" % (100.0 * (q["price"] / q["prev_close"] - 1),
+                                                           money_text(q["prev_close"], q.get("currency")))
+                e_ = euro.get(s)
+                in_eur = ("  = %s" % money_text(e_["price"], BASE)) if e_ and q.get("currency") != BASE else ""
+                print("%-8s %s%s%s  %s  [%s]" % (s, money_text(q["price"], q.get("currency")), in_eur, chg,
+                                                  q.get("time", ""), q["source"]))
         for e in errors:
             print("error: " + e)
-        if a.write and quotes:
-            print("Wrote %d price(s) to %s." % (len(quotes), a.write))
+        if a.write and euro:
+            print("Wrote %d price(s) in euro to %s." % (len(euro), a.write))
         print("Quotes are delayed and for alerts only. Your broker's price is the one that fills.")
     return 0 if quotes else 1
 
@@ -456,10 +577,12 @@ def cmd_check(a):
     quotes, errors = (get_quotes(syms, a.source, a.offline) if syms else ({}, []))
     state = _read(a.state, {})
     rings, state = evaluate(rules, quotes, status, state, now)
+    euro, fx_errors = convert_quotes(quotes, parse_fx(a.fx), a.fx_date, now)
+    errors = errors + fx_errors
     if not a.no_write:
         _write(a.state, state)
-        if quotes:
-            write_prices(a.prices_out, quotes, now, a.source)
+        if euro:
+            write_prices(a.prices_out, euro, now, a.source)
     if a.json:
         print(json.dumps({"market": status, "rings": rings, "errors": errors,
                           "quotes": {s: q["price"] for s, q in quotes.items()}}, indent=2))
@@ -548,6 +671,10 @@ def main(argv=None):
         p.add_argument("--offline", metavar="DIR", help="read <source>-<TICKER>.json|csv files, no network")
         p.add_argument("--now", help="pretend it is this time (ISO; no offset = New York time)")
         p.add_argument("--json", action="store_true")
+        p.add_argument("--fx", action="append", default=[], metavar="CUR=RATE",
+                       help="how many CUR one euro buys, e.g. USD=1.08 (ECB style); repeat for more")
+        p.add_argument("--fx-date", metavar="YYYY-MM-DD", help="the day you read the rate (at most %d days old)"
+                       % MAX_FX_AGE_DAYS)
 
     p = sub.add_parser("clock", help="is the NYSE open?")
     p.add_argument("--now")

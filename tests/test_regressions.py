@@ -17,10 +17,12 @@ rebalance = load("trader-rebalance", "rebalance")
 
 CFG = {"budget": 5000}
 PRICES = {"AAPL": 341.27}
+META = {"AAPL": {"price_currency": "EUR", "native_currency": "EUR", "fx_rate": 1.0}}
 BUY = {"symbol": "AAPL", "side": "buy", "notional": "1250", "type": "market", "time_in_force": "day"}
 
 
 def verdict(order, cfg=None, prices=None, **kw):
+    kw.setdefault("price_meta", META)
     res = risk.check([order], cfg or CFG, None, PRICES if prices is None else prices, None, "2026-11-05", **kw)
     return res["results"][0]["verdict"]
 
