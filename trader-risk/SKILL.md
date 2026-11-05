@@ -47,7 +47,8 @@ batch that is fine order by order but breaks a rule together is caught.
 | check | blocks when |
 | --- | --- |
 | format | no symbol, side not buy or sell, both or neither of qty and notional, a notional order that is not market + day (Alpaca's rule), a limit order with no limit price |
-| asset | an option symbol while `allow_options` is false; crypto or anything that is not a US stock or ETF ticker |
+| asset | an option symbol while `allow_options` is false; crypto or anything that is not a stock or ETF ticker (US `KO`, `BRK.B`; European `SAP.DE`, `MC.PA`); a **buy** of a well-known US-domiciled ETF (`SPY`, `QQQ`, `VOO` ...) because EU retail brokers generally cannot sell those (PRIIPs, no KID): use the UCITS version, or set `allow_us_etfs` if your broker really allows it; leveraged and inverse funds (`TQQQ`, `SQQQ` ...) unless `allow_leveraged`. The lists are partial: the broker is the authority |
+| currency | a share order sized from a price that `prices.json` does not mark as euro, or a limit/stop price whose currency is unknown. Limit prices are in the stock's own currency and are converted with the rate stored in prices.json |
 | blocked | the ticker is on the `blocked` list |
 | size | under `min_order_eur` or over `max_order_eur` |
 | position | the stock would be over `max_position_pct` of the account after the fill |

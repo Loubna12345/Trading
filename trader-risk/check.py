@@ -17,7 +17,12 @@ What blocks an order:
                 notional on anything but a market day order (Alpaca's rule),
                 a limit order without a limit price, unknown type
   asset         options (OCC symbols) unless "allow_options": true; crypto
-                and anything that is not a stock or ETF
+                and anything that is not a stock or ETF; US-domiciled ETFs
+                (a BUY; EU retail brokers can't sell them under PRIIPs) unless
+                "allow_us_etfs": true; leveraged and inverse funds unless
+                "allow_leveraged": true; the lists are partial, not complete
+  currency      a share order sized from a price that prices.json does not
+                mark as euro; a limit price whose currency is unknown
   blocked       a ticker on your "blocked" list
   size          under min_order_eur, over max_order_eur
   position      the stock would be over max_position_pct of the account
@@ -54,7 +59,28 @@ ALPACA_FIELDS = ("symbol", "side", "qty", "notional", "type", "time_in_force", "
 TYPES = {"market", "limit", "stop", "stop_limit", "trailing_stop"}
 TIFS = {"day", "gtc", "opg", "cls", "ioc", "fok"}
 OCC = re.compile(r"^[A-Z]{1,6}\d{6}[CP]\d{8}$")
-TICKER = re.compile(r"^[A-Z]{1,5}([.\-][A-Z]{1,2})?$")
+# US tickers: 1-5 letters, optionally a one-letter share class (BRK.B, BF-B).
+# European tickers: Yahoo-style, the exchange suffix is part of the ticker (SAP.DE, 1COV.DE, MC.PA, NOVO-B.CO).
+# The suffixes are the same list as trader-alerts (each skill folder stands alone, so it is repeated here).
+EXCHANGE_SUFFIXES = ("DE", "PA", "AS", "BR", "LS", "MI", "MC", "HE", "VI", "IR", "L", "SW", "ST", "CO", "OL")
+TICKER = re.compile(r"^(?:[A-Z]{1,5}(?:[.\-][A-Z])?|[A-Z0-9]{1,6}(?:-[A-Z])?\.(?:%s))$" % "|".join(EXCHANGE_SUFFIXES))
+
+# Well-known US-domiciled ETFs. EU retail clients generally cannot BUY these: the PRIIPs rules need a Key
+# Information Document (KID) that US fund companies do not publish, so brokers stopped offering them
+# (https://www.justetf.com/en/news/etf/us-domiciled-etfs.html: you can hold or sell, but not buy more).
+# This list is NOT complete: it catches the common ones; your broker is the authority.
+US_ETFS = {
+    "SPY", "IVV", "VOO", "VTI", "QQQ", "DIA", "IWM", "IWF", "IWD", "VEA", "VWO", "VNQ", "VUG", "VTV", "VIG", "VYM",
+    "SCHD", "SCHX", "SCHB", "XLK", "XLF", "XLE", "XLV", "XLY", "XLP", "XLI", "XLB", "XLU", "XLRE", "XLC", "ARKK",
+    "GLD", "SLV", "TLT", "IEF", "SHY", "LQD", "HYG", "AGG", "BND", "EEM", "EFA", "IEFA", "IEMG", "SOXX", "SMH",
+    "VGT", "VXUS", "VT", "SPYG", "SPYV", "MTUM", "QUAL", "USMV", "QQQM", "SPLG", "ITOT", "IJH", "IJR", "VB", "VO",
+}
+# Leveraged and inverse ETFs/ETNs: they reset daily and can lose most of their value while the index is flat.
+LEVERAGED = {
+    "TQQQ", "SQQQ", "SPXL", "SPXS", "UPRO", "SPXU", "SOXL", "SOXS", "TNA", "TZA", "UVXY", "SVXY", "VXX", "UVIX",
+    "LABU", "LABD", "FAS", "FAZ", "TECL", "TECS", "NUGT", "DUST", "JNUG", "JDST", "BOIL", "KOLD", "UCO", "SCO",
+    "YINN", "YANG", "TMF", "TMV", "QLD", "SSO", "SDS", "QID", "SH", "PSQ", "DOG", "SPXS", "FNGU", "FNGD",
+}
 CENT = 0.005
 
 
@@ -233,8 +259,22 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, pric
             else:
                 warns.append("option order: options can lose 100%% of what you pay")
         elif sym and ("/" in sym or not TICKER.match(sym)):
-            reasons.append("asset: %s does not look like a US stock or ETF ticker; "
+            reasons.append("asset: %s does not look like a stock or ETF ticker (US: KO, BRK.B; Europe: SAP.DE, MC.PA); "
                            "this pack trades stocks and ETFs only" % sym)
+        elif sym in LEVERAGED:
+            if not c.get("allow_leveraged"):
+                reasons.append("asset: %s is a leveraged or inverse fund; it resets daily and can lose most of its "
+                               "value while the market goes nowhere (\"allow_leveraged\": false)" % sym)
+            else:
+                warns.append("%s is a leveraged or inverse fund: it can lose most of what you pay" % sym)
+        elif sym in US_ETFS and side == "buy":
+            if not c.get("allow_us_etfs"):
+                reasons.append("asset: %s is a US-domiciled ETF. EU retail brokers generally cannot sell you one "
+                               "(PRIIPs: no Key Information Document). Buy the UCITS version of the same index "
+                               "instead (search the index name on justETF); set \"allow_us_etfs\": true only if "
+                               "your broker really lets you buy it" % sym)
+            else:
+                warns.append("%s is a US-domiciled ETF: check your broker really allows it, and the tax treatment" % sym)
 
         # blocked list
         if sym in blocked:

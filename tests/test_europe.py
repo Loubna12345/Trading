@@ -286,5 +286,63 @@ class EuropeanClocks(unittest.TestCase):
         self.assertIn("€140.00", rings[0]["message"])
 
 
+def asset(sym, side="buy", cfg=None, portfolio=None):
+    o = {"symbol": sym, "side": side, "notional": "100", "type": "market", "time_in_force": "day"}
+    if side == "sell":
+        o = {"symbol": sym, "side": "sell", "qty": "1", "type": "market", "time_in_force": "day"}
+    c = {"budget": 5000}
+    c.update(cfg or {})
+    res = risk.check([o], c, portfolio, {sym: 100.0}, None, "2026-11-05", price_times={sym: "2026-11-05T10:00:00Z"},
+                     now=NOW, price_meta={sym: EUR_META})
+    r = res["results"][0]
+    return r["verdict"], " | ".join(r["reasons"])
+
+
+class EuropeanAssets(unittest.TestCase):
+    def test_european_tickers_are_accepted(self):
+        for sym in ("SAP.DE", "1COV.DE", "BMW.DE", "ASML.AS", "MC.PA", "ENI.MI", "UCG.MI", "NOVO-B.CO", "SHEL.L"):
+            with self.subTest(sym=sym):
+                self.assertEqual(asset(sym)[0], "PASS")
+
+    def test_us_tickers_still_work(self):
+        for sym in ("KO", "AAPL", "BRK.B", "BF-B"):
+            self.assertEqual(asset(sym)[0], "PASS", sym)
+
+    def test_bad_symbols_are_still_blocked(self):
+        for sym in ("SAP.XX", "SAP.DE.DE", ".DE", "SAP DE", "BTC/EUR", "sap.de!", "WAYTOOLONGTICKER.DE"):
+            with self.subTest(sym=sym):
+                v, why = asset(sym)
+                self.assertEqual(v, "BLOCK")
+                self.assertIn("stocks and ETFs only", why)
+
+    def test_us_domiciled_etfs_cannot_be_bought(self):
+        for sym in ("SPY", "QQQ", "VOO", "VTI", "IVV"):
+            with self.subTest(sym=sym):
+                v, why = asset(sym)
+                self.assertEqual(v, "BLOCK")
+                self.assertIn("PRIIPs", why)
+                self.assertIn("UCITS", why)
+
+    def test_a_us_etf_you_already_hold_can_be_sold(self):
+        pf = {"cash": 0, "positions": [{"ticker": "SPY", "shares": 5, "lots": [{"date": "2026-01-02", "shares": 5, "cost": 400}]}]}
+        self.assertEqual(asset("SPY", "sell", portfolio=pf)[0], "PASS")
+
+    def test_the_us_etf_block_can_be_lifted_on_purpose(self):
+        v, _ = asset("SPY", cfg={"allow_us_etfs": True})
+        self.assertEqual(v, "PASS")
+
+    def test_leveraged_and_inverse_etfs_are_blocked(self):
+        for sym in ("TQQQ", "SQQQ", "SOXL", "UVXY", "UPRO"):
+            with self.subTest(sym=sym):
+                v, why = asset(sym)
+                self.assertEqual(v, "BLOCK")
+                self.assertIn("leveraged or inverse", why)
+        self.assertEqual(asset("TQQQ", cfg={"allow_leveraged": True})[0], "PASS")
+
+    def test_a_ucits_etf_on_xetra_passes(self):
+        self.assertEqual(asset("EUNL.DE")[0], "PASS")
+        self.assertEqual(asset("VWCE.DE")[0], "PASS")
+
+
 if __name__ == "__main__":
     unittest.main()
