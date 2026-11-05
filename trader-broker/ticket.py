@@ -31,6 +31,7 @@ import argparse
 import datetime
 import hashlib
 import json
+import math
 import os
 import re
 import sys
@@ -269,8 +270,30 @@ def ticket_json(order, idx, cfg, risk, state, today):
 
 # ---------------------------------------------------------------- fills -> lots
 
-def apply_fill(portfolio_path, cfg, symbol, side, qty, price, date):
-    """Record a filled order in trader/portfolio.json (a lot for a buy, FIFO for a sell)."""
+def apply_fill(portfolio_path, cfg, symbol, side, qty, price, date, currency="EUR", fx=None, fees=0.0):
+    """Record a filled BUY in trader/portfolio.json as a lot whose cost is in euro (fees included).
+
+    A price in another currency is converted with `fx` (how many of that currency one euro buys on the day of
+    the purchase): the German gain is worked out in euro with the rate of each day (§ 20 Abs. 4 EStG).
+    Sells are not recorded here: trader-tax does that (steuer.py sell ... --record), so the taxable sale is
+    logged exactly once."""
+    if side != "buy":
+        raise TicketError("record a sale with trader-tax, not here: steuer.py sell %s QTY --price EUR_PRICE --record "
+                          "(it updates the lots, the cash and the realized-gains log in one step)" % symbol.upper())
+    currency = str(currency or "EUR").upper()
+    try:
+        qty_f, price_f, fees_f = float(qty), float(price), float(fees or 0)
+        fx_f = float(fx) if fx is not None else None
+    except (TypeError, ValueError):
+        raise TicketError("qty, price, fees and fx must be numbers")
+    if not all(math.isfinite(v) for v in (qty_f, price_f, fees_f)) or qty_f <= 0 or price_f < 0 or fees_f < 0:
+        raise TicketError("qty must be above zero; price and fees must not be negative")
+    if currency != "EUR":
+        if fx_f is None or not math.isfinite(fx_f) or fx_f <= 0:
+            raise TicketError("a %s price needs --fx RATE: how many %s one euro bought on the day (the cost basis "
+                              "is kept in euro)" % (currency, currency))
+        price_f = price_f / fx_f
+    price = price_f
     pf = read_json(portfolio_path, "portfolio", required=False)
     if pf is None:
         budget = cfg.get("budget")
@@ -278,8 +301,8 @@ def apply_fill(portfolio_path, cfg, symbol, side, qty, price, date):
             raise TicketError("no %s yet and no budget in the config to start it from" % portfolio_path)
         pf = {"cash": float(budget), "positions": []}
     symbol = symbol.upper()
-    qty, price = float(qty), float(price)
-    cost = round(qty * price, 2)
+    qty = qty_f
+    cost = round(qty * price + fees_f, 2)
     pos = None
     for p in pf.setdefault("positions", []):
         if str(p.get("ticker", "")).upper() == symbol:
@@ -292,24 +315,6 @@ def apply_fill(portfolio_path, cfg, symbol, side, qty, price, date):
         lots.append({"id": "%s-%d" % (symbol, len(lots) + 1), "date": date, "shares": qty, "cost": cost})
         pos["shares"] = round(float(pos.get("shares", 0)) + qty, 6)
         pf["cash"] = round(float(pf.get("cash", 0)) - cost, 2)
-    else:
-        if pos is None or float(pos.get("shares", 0)) + 1e-9 < qty:
-            raise TicketError("cannot record selling %s %s: the portfolio holds %s"
-                              % (qty, symbol, pos.get("shares", 0) if pos else 0))
-        left = qty
-        for lot in sorted(pos.get("lots", []), key=lambda l: l.get("date", "")):
-            if left <= 1e-9:
-                break
-            take = min(left, float(lot["shares"]))
-            per = float(lot["cost"]) / float(lot["shares"]) if float(lot["shares"]) else 0
-            lot["cost"] = round(float(lot["cost"]) - per * take, 2)
-            lot["shares"] = round(float(lot["shares"]) - take, 6)
-            left -= take
-        pos["lots"] = [l for l in pos.get("lots", []) if float(l["shares"]) > 1e-9]
-        pos["shares"] = round(float(pos["shares"]) - qty, 6)
-        if pos["shares"] <= 1e-9:
-            pf["positions"].remove(pos)
-        pf["cash"] = round(float(pf.get("cash", 0)) + cost, 2)
     write_json(portfolio_path, pf)
     return pf
 
@@ -421,9 +426,10 @@ def cmd_result(a):
 def cmd_fill(a):
     cfg = read_json(a.config, "config", required=False) or {}
     date = a.date or datetime.date.today().isoformat()
-    pf = apply_fill(a.portfolio, cfg, a.symbol, a.side, a.qty, a.price, date)
-    print("Recorded %s %s %s at %s on %s. Cash now %s." % (a.side, a.qty, a.symbol.upper(),
-                                                          _money(a.price), date, _money(pf["cash"])))
+    pf = apply_fill(a.portfolio, cfg, a.symbol, a.side, a.qty, a.price, date, a.currency, a.fx, a.fees)
+    lot = [p for p in pf["positions"] if p["ticker"] == a.symbol.upper()][0]["lots"][-1]
+    print("Recorded %s %s %s on %s: cost %s in euro (fees included). Cash now %s." % (
+        a.side, a.qty, a.symbol.upper(), date, _money(lot["cost"]), _money(pf["cash"])))
     return 0
 
 
@@ -479,7 +485,10 @@ def main(argv=None):
     p.add_argument("--symbol", required=True)
     p.add_argument("--side", required=True, choices=["buy", "sell"])
     p.add_argument("--qty", required=True)
-    p.add_argument("--price", required=True)
+    p.add_argument("--price", required=True, help="price per share in --currency")
+    p.add_argument("--currency", default="EUR", help="currency of --price (default EUR)")
+    p.add_argument("--fx", help="how many of --currency one euro bought on the day (needed unless EUR)")
+    p.add_argument("--fees", default="0", help="fees in euro; they are part of the purchase cost")
     p.add_argument("--date")
     p.add_argument("--portfolio", default="trader/portfolio.json")
     p.add_argument("--config", default="trader/config.json")

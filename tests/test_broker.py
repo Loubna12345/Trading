@@ -199,25 +199,46 @@ class Flow(unittest.TestCase):
         self.assertIn("after you approve it there", text)
         self.assertNotIn("place_stock_order", text)
 
-    def test_fill_sell_relieves_the_oldest_lot(self):
+    def test_fill_sells_are_refused_so_the_taxable_sale_is_never_lost(self):
         pf = {"cash": 0, "positions": [{"ticker": "KO", "shares": 3, "lots": [
-            {"id": "KO-1", "date": "2025-01-02", "shares": 2, "cost": 120.0},
-            {"id": "KO-2", "date": "2026-01-02", "shares": 1, "cost": 70.0}]}]}
+            {"id": "KO-1", "date": "2025-01-02", "shares": 3, "cost": 180.0}]}]}
         with open(self.pf, "w") as fh:
             json.dump(pf, fh)
-        code, text, _ = run(["fill", "--symbol", "KO", "--side", "sell", "--qty", "2.5", "--price", "90",
-                             "--date", TODAY, "--portfolio", self.pf, "--config", self.cfg])
-        self.assertEqual(code, 0)
+        code, _, err = run(["fill", "--symbol", "KO", "--side", "sell", "--qty", "2", "--price", "90",
+                            "--date", TODAY, "--portfolio", self.pf, "--config", self.cfg])
+        self.assertEqual(code, 1)
+        self.assertIn("trader-tax", err)
+        self.assertIn("steuer.py sell", err)
+        with open(self.pf) as fh:
+            self.assertEqual(json.load(fh), pf)
+
+    def test_fill_buy_in_euro(self):
+        with open(self.pf, "w") as fh:
+            json.dump({"cash": 1000, "positions": []}, fh)
+        code, _, err = run(["fill", "--symbol", "SAP.DE", "--side", "buy", "--qty", "4", "--price", "140",
+                            "--fees", "1.5", "--date", TODAY, "--portfolio", self.pf, "--config", self.cfg])
+        self.assertEqual(code, 0, err)
         with open(self.pf) as fh:
             pf = json.load(fh)
-        self.assertEqual(pf["cash"], 225.0)
-        lots = pf["positions"][0]["lots"]
-        self.assertEqual([l["id"] for l in lots], ["KO-2"])
-        self.assertEqual(lots[0]["shares"], 0.5)
-        self.assertEqual(lots[0]["cost"], 35.0)
-        code, _, err = run(["fill", "--symbol", "KO", "--side", "sell", "--qty", "5", "--price", "90",
-                            "--portfolio", self.pf, "--config", self.cfg])
+        self.assertEqual(pf["cash"], 1000 - 561.5)
+        self.assertEqual(pf["positions"][0]["lots"][0]["cost"], 561.5)  # fees are part of the purchase cost
+
+    def test_fill_buy_in_dollars_needs_the_rate_and_costs_euro(self):
+        with open(self.pf, "w") as fh:
+            json.dump({"cash": 1000, "positions": []}, fh)
+        base = ["fill", "--symbol", "KO", "--side", "buy", "--qty", "4", "--price", "90", "--date", TODAY,
+                "--portfolio", self.pf, "--config", self.cfg]
+        code, _, err = run(base + ["--currency", "USD"])
         self.assertEqual(code, 1)
+        self.assertIn("--fx", err)
+        for bad in ("0", "-1", "nan", "abc"):
+            self.assertEqual(run(base + ["--currency", "USD", "--fx", bad])[0], 1, bad)
+        code, _, err = run(base + ["--currency", "USD", "--fx", "1.25"])
+        self.assertEqual(code, 0, err)
+        with open(self.pf) as fh:
+            pf = json.load(fh)
+        self.assertEqual(pf["positions"][0]["lots"][0]["cost"], 288.0)  # 4 x 90 / 1.25 euro, the rate of the day
+        self.assertEqual(pf["cash"], 1000 - 288.0)
 
 
 if __name__ == "__main__":
