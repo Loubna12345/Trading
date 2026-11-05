@@ -4,15 +4,18 @@ Audited upstream commit 5189e79 (static review of all code and SKILL.md files, a
 outside verification). No malware, exfiltration or hidden access was found. The issues below are
 engineering-safety issues. Each fix lands as its own commit with a regression test.
 
-## Fix queue (status updated as commits land)
-1. Risk check passes NaN/inf amounts and prices (fail open)
-2. prices.json looks fresh while holding old prices; no per-ticker timestamps
-3. Share orders sized from stale or untimed prices pass the risk check
-4. `check_ticker` (unverified ticker guess) is never enforced downstream
-5. A "yes" with extra instructions ("yes, use margin") is accepted
-6. trailing_stop without trail parameters passes
-7. NaN weights crash sizing with a raw ValueError
-8. HTTP clients identify as the upstream project
+## Fixed (each fix is its own commit; its regression test is in tests/test_regressions.py)
+1. Risk check passed NaN/inf amounts and prices: now BLOCKED (fails closed)
+2. prices.json looked fresh while holding old prices: per-ticker `fetched_at`, file `as_of` = oldest ticker
+3. Share orders sized from stale or untimed prices passed: blocked past `max_price_age_hours` (default 72)
+4. `check_ticker` was never enforced: carried onto orders by budget and rebalance, BLOCKED by risk
+5. A "yes" with extra instructions ("yes, use margin") was accepted: only a plain yes counts
+6. trailing_stop without trail parameters passed: blocked
+7. NaN weights crashed sizing with a raw ValueError: clean SizeError
+8. HTTP clients identified as the upstream project: neutral User-Agent, guarded by a test
+
+Upstream tests changed: test_repo.py was replaced (it asserted the author's marketing copy and plugin
+files); test_risk.py share-order cases now pass fresh price timestamps (the old behaviour was the bug).
 
 ## Open (do before any real money)
 1. Gates are enforced by Claude following instructions. Move order submission into your own script that
