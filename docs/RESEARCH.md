@@ -11,6 +11,17 @@ Nothing here is financial or tax advice.
 | Over 80% of day traders lose money after transaction costs. About 1% of individual investors produced 50% of day trading volume. The most active group earned about 31 bp per day, not enough to cover costs; a small group earned about 62 bp and covered them. | Barber, Lee, Liu, Odean, "Do Individual Day Traders Make Money? Evidence from Taiwan" (2004), read through the [CXO Advisory summary](https://www.cxoadvisory.com/individual-investing/do-day-traders-make-money/) | One market, 2004, secondary summary. The paper itself was not read. |
 | A published intraday momentum rule on SPY (1-minute data, 2007-2024) reports Sharpe 1.24 to 1.33 net of costs against 0.45 for buy and hold. | Zarattini, Aziz, Barbon, "Beat the Market: An Effective Intraday Momentum Strategy for S&P500 ETF (SPY)", 2025 version, [PDF](https://alexandria.unisg.ch/server/api/core/bitstreams/a99aba00-f967-49b3-aceb-f544dc386e0b/content) | Backtest only, no out-of-sample test shown, authors sell trading tools, final version uses up to 4x leverage, edge reported to fade after 2013 in earlier work, costs assume a US institutional-grade broker. |
 
+More evidence, added 2026-11-05 (primary papers read through summaries or abstracts, not in full):
+
+| Finding | Source |
+| --- | --- |
+| Brazil, 19,646 people who started day trading futures in 2013-2015: of those who kept going more than 300 days, 97% lost money; only 0.5% (8 people) earned more than a bank teller's starting pay; no sign that traders improved. | Chague, De-Losso, Giovannetti, "Day Trading for a Living?", via [Quantpedia](https://quantpedia.com/retail-day-trading-is-an-uphill-battle/) |
+| Taiwan, every trader 1992-2006: about 13-15% of day traders profit net in a typical year; only about 1,000 of roughly 360,000 (under 1%) are reliably profitable after costs year after year; past profit predicts future profit. | Barber, Lee, Liu, Odean, "The Cross-Section of Speculator Skill: Evidence from Day Trading" (2020), [paper](https://faculty.haas.berkeley.edu/odean/papers/day%20traders/Day%20Trading%20Skill%20110523.pdf) |
+| Germany, turbo certificates (leveraged), 2019-2023, about 543,000 retail investors: 74.2% lost money, average loss EUR 6,358 per loser, over EUR 3.4 billion in total. | BaFin report as reported by [Finance Magnates](https://www.financemagnates.com/forex/bafin-reports-74-of-german-retail-turbo-traders-lost-money-34b-gone/amp) (secondary; I did not open BaFin's own report) |
+
+I found no recent peer-reviewed study of European cash-stock day trading. The evidence is from Taiwan, Brazil
+futures and German leveraged products, so none matches a euro cash account exactly.
+
 What this means for the project:
 
 1. The base rate is bad. A tool that reports "reliable predictions" for day trading would be lying. The
