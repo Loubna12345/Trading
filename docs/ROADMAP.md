@@ -18,12 +18,34 @@ order without the existing risk check and your yes, paper keys only.
 | 6 | Journal and paper broker: every signal, order, fill and exit logged; Trading 212 demo adapter behind the existing risk check and approval | one full day of paper trades logged and reconciled with the broker | not started |
 | 7 | Review loop: scheduled weekly review that computes the numbers, Claude reads the journal and proposes rule changes, each change is re-validated before use | a rule change only goes live if it passes step 4 on data it was not tuned on | not started |
 | 8 | Go or no-go gate for real money: minimum months of paper results, minimum trades, beats the buy-and-hold baseline after costs and German tax | written criteria, checked by a script, you decide | not started |
+| B | **Bonus: training.** Repeated runs of every strategy on real data and many stocks, under a fixed protocol, to find edges that hold up across stocks and time (see the protocol below) | a ledger of every run, a verdict per rule across stocks, and one final untouched test per surviving rule | not started; needs your real data |
 
 ## What "learning" means here
 
 The agent does not change its own weights. It improves by evidence: journal, numbers, a proposed change,
 a test on unseen data, then adoption or rejection. Versions of each strategy are kept so version 3 can be
 compared with version 2.
+
+## Bonus: the training protocol
+
+Running many rules on many stocks and keeping what works is the easiest way to fool yourself, so the training
+has fixed rules written before any run:
+
+1. **Write the idea first.** Every strategy has a reason stated before it is run. No rule is added after seeing
+   which ones worked.
+2. **Split the stocks.** Pick tickers for discovery and keep others untouched for confirmation. A rule that works
+   only on the stocks it was found on is rejected.
+3. **Keep the last months untouched.** The most recent part of every series is not used until the final test, and
+   each rule gets that one test once.
+4. **Keep a ledger.** Every run (rule, settings, stock, period, result) is appended to a file that cannot be edited
+   by the tools. The number of runs in the ledger feeds the deflated Sharpe automatically, so repeating runs
+   makes the bar higher, not lower.
+5. **Judge across stocks, not on the best one.** A rule is only interesting if it passes on a clear share of the
+   stocks, and that share is compared with what chance would give (a rule with no edge will pass on some stocks
+   by luck).
+6. **Limit the rounds.** A fixed number of rounds per data set; when it is used up the data set is spent and new
+   data is needed.
+7. **Forward test last.** What survives goes to paper money (step 6) as the final out-of-sample test.
 
 ## Known limits
 
