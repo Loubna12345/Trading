@@ -63,7 +63,7 @@ python3 "${CLAUDE_SKILL_DIR}/rebalance.py" --json
 1. Refresh prices: trader-alerts `alerts.py quote --holdings --write`.
 2. Run `rebalance.py` and show the drift table in plain words: which stocks
    are over or under, by how many points, and what it would trade.
-3. Before any sell, run trader-tax (`lots.py sell TICKER SHARES`) and show
+3. Before any sell, run trader-tax (`steuer.py sell TICKER SHARES --price P`) and show
    what the sale would realize. Selling a winner can mean a tax bill.
 4. If the user wants the trades: `rebalance.py --write`, then `/trader-risk`,
    then `/trader-broker`, one yes per order.

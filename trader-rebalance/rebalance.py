@@ -272,7 +272,7 @@ def report(res):
     for n in res["notes"]:
         lines.append("Note: " + n)
     lines.append("")
-    lines.append("Selling can realize a taxable gain: check trader-tax (lots.py sell) first. Then trader-risk "
+    lines.append("Selling can realize a taxable gain: check trader-tax (steuer.py sell) first. Then trader-risk "
                  "checks every order and trader-broker asks you yes or no for each one.")
     lines.append("Education and tooling, not financial advice.")
     return "\n".join(lines)
