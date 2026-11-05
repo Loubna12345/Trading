@@ -14,6 +14,9 @@ argument-hint: "[metrics file] [--rules rules.json]"
 
 # trader-screener
 
+> **Europe note.** The metrics come from SEC filings, so only US-listed companies can be screened. European
+> tickers (SAP.DE, MC.PA) have no data here; screen them from a CSV you supply if you have one.
+
 A screen turns "I want profitable companies that are still growing and not
 too expensive" into rules a computer can check, and shows its work: every
 pass and every fail comes with the number and the threshold.

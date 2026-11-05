@@ -14,6 +14,10 @@ argument-hint: "[tickers]"
 
 # trader-news
 
+> **Europe note.** The company-filings half reads SEC EDGAR (US companies only). For a European company the
+> regulatory announcements are on the exchange and company sites (for Germany, the issuer's ad-hoc notices and
+> the Unternehmensregister); this skill does not read them.
+
 A position you hold can change in a minute: an earnings miss, a CEO leaving,
 a lawsuit, a restatement. This skill reads the two feeds that carry those
 first for each of your stocks and tells you only what is new.

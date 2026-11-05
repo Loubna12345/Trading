@@ -15,6 +15,11 @@ argument-hint: "[investor, fund or CIK] [--top N]"
 
 # trader-copycat
 
+> **Europe note.** 13F filings cover US-listed stocks held by large US managers. You can copy what a US fund holds,
+> but your broker must offer those stocks to you in Germany, and any ETF in the list (SPY, QQQ ...) is blocked by
+> trader-risk because EU retail brokers generally cannot sell US-domiciled ETFs (PRIIPs). Prices are converted to
+> euro with the rate you state; dollar moves are part of your result and of your German tax.
+
 Copying an investor starts with what they are legally required to show: a
 13F-HR, filed with the SEC every quarter by any investment manager with over
 $100 million in US-listed stocks and other 13(f) securities. This skill reads

@@ -3,14 +3,14 @@ name: trader-budget
 description: >-
   Budget Manager. Sizes every position to your budget before anything is
   bought: keeps a cash buffer, caps any one stock (the excess is shared out to
-  the others), drops slices under your minimum order, rounds so every dollar
+  the others), drops slices under your minimum order, rounds so every euro
   is used, supports fractional or whole shares, and writes the proposed buy
   orders to trader/orders.json in the exact shape of Alpaca's
   place_stock_order (notional as a string). Nothing is placed. Use when the
   user says "I have €5,000", "size my trades", "how much of each should I
   buy", "manage my budget", "split my money", "keep 10% in cash", "no stock
   over 25%", "set my rules", or after /trader-copycat writes targets.
-argument-hint: "[budget in dollars]"
+argument-hint: "[budget in euro]"
 ---
 
 # trader-budget
@@ -60,14 +60,14 @@ The maths, in order: the cash buffer comes off the top; the weights are
 renormalised to 100 over the stocks that are left; any stock over the cap is
 pinned at the cap and its excess is shared over the others by weight, again
 until nobody is over; a slice under the minimum order is dropped and its
-weight shared out; amounts are rounded to whole dollars and the rounding
-dollar goes to the biggest stock that is not capped, so nothing is left
+weight shared out; amounts are rounded to whole euros and the rounding
+euro goes to the biggest stock that is not capped, so nothing is left
 idle by accident. Money that truly cannot be invested (every stock at its
 cap, or whole shares that do not divide evenly) is shown as "left idle".
 
 ## Step 3: show the user
 
-Show the table: ticker, weight, dollars, which stock hit the cap, the cash
+Show the table: ticker, weight, euros, which stock hit the cap, the cash
 buffer and what is left idle. Say where the weights came from and how old
 they are (a 13F is up to 45 days old when it is filed). Then hand over to
 `/trader-risk`.
@@ -79,7 +79,7 @@ American Express 17.14%, Alphabet 12.62%, Coca-Cola 10.86%, Bank of America
 9.20%. Renormalised over those five: 30.67 / 23.85 / 17.56 / 15.11 / 12.80.
 A €5,000 budget, a 10% cash buffer and a 25% cap:
 
-| stock | dollars | |
+| stock | euros | |
 | --- | --- | --- |
 | AAPL | €1,250 | capped at 25% |
 | AXP | €1,119 | |
@@ -92,7 +92,7 @@ A €5,000 budget, a 10% cash buffer and a 25% cap:
 The first order it writes is
 `{"symbol": "AAPL", "side": "buy", "notional": "1250", "type": "market", "time_in_force": "day"}`.
 Keep the weights to two decimals or more: weights already rounded to one
-decimal (30.7 / 23.9 / ...) can move a slice by a dollar.
+decimal (30.7 / 23.9 / ...) can move a slice by a euro.
 
 ## Rules
 

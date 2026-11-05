@@ -63,7 +63,7 @@ sent as a number instead of a string, an advanced (bracket) order.
 ## Steps
 
 1. Make sure `trader/prices.json` is fresh if any order is a share count or
-   any holding needs a value (trader-alerts: `alerts.py quote --holdings --write`).
+   any holding needs a value (trader-alerts: `alerts.py quote --holdings --fx USD=RATE --fx-date DATE --write`).
 2. Run `check.py`. Exit code 0 means every order passed, 1 means at least one
    was blocked.
 3. Tell the user the result in plain words, order by order. For a BLOCK, give

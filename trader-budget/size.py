@@ -2,7 +2,7 @@
 """Position sizing for trader-budget. Standard library only, no network.
 
 Turns target weights (the portfolio you want to copy) and your rules (budget,
-cash buffer, a cap on any one stock, a minimum order) into dollar amounts per
+cash buffer, a cap on any one stock, a minimum order) into euro amounts per
 stock, then into proposed orders shaped like Alpaca's place_stock_order. It
 never places anything: it writes proposals to trader/orders.json, which
 trader-risk checks and trader-broker shows you one by one.
@@ -23,9 +23,9 @@ How the money is split:
                    weight, again and again until nobody is over
   4. min order     a slice under min_order_eur is dropped and its weight
                    shared out, so you never place a €2 order
-  5. rounding      whole dollars by default (--cents for cents); the rounding
-                   dollar goes to the biggest position that is not capped, so
-                   every dollar of the investable money is used
+  5. rounding      whole euros by default (--cents for cents); the rounding
+                   euro goes to the biggest position that is not capped, so
+                   every euro of the investable money is used
   6. whole shares  only with --whole-shares or "fractional": false; needs
                    prices; buys whole shares, then spends what is left one
                    share at a time on the stock furthest below its slice
@@ -176,11 +176,11 @@ def normalise(rows, blocked=(), top=None):
 
 
 def allocate(rows, investable, cap):
-    """Exact (unrounded) dollars per ticker with the cap enforced.
+    """Exact (unrounded) euros per ticker with the cap enforced.
 
     Proportional to weight; any stock over the cap is pinned at the cap and
     the rest of the money is shared over the others, repeated until no stock
-    is over. Returns ({ticker: dollars}, set of capped tickers)."""
+    is over. Returns ({ticker: euros}, set of capped tickers)."""
     alloc, capped = {}, set()
     active = [r for r in rows]
     money = investable
@@ -204,7 +204,7 @@ def allocate(rows, investable, cap):
 
 
 def round_to_unit(exact, capped, order, cap, unit):
-    """Round to whole dollars (unit 1) or cents (unit 0.01) and keep the total.
+    """Round to whole euros (unit 1) or cents (unit 0.01) and keep the total.
 
     The total placed is the exact total rounded DOWN to the unit, so it never
     spends money you do not have. Each slice is rounded to the nearest unit,
@@ -327,13 +327,13 @@ def size(rows, cfg, budget=None, prices=None, whole=None, cents=False, top=None)
     for r in sorted(live, key=lambda r: -r["weight"]):
         t = r["ticker"]
         p = {"ticker": t, "name": r["name"], "weight": round(r["weight"], 2),
-             "source_weight": r["source_weight"], "dollars": dollars[t],
+             "source_weight": r["source_weight"], "eur": dollars[t],
              "capped": t in capped, "check_ticker": bool(r.get("check_ticker"))}
         if prices.get(t):
             p["price"] = prices[t]
             p["shares"] = shares[t] if whole else round(dollars[t] / prices[t], 4)
         positions.append(p)
-    invested = round(sum(p["dollars"] for p in positions), 2)
+    invested = round(sum(p["eur"] for p in positions), 2)
     return {
         "budget": budget, "cash_buffer_pct": buf_pct, "cash_buffer": cash_buffer,
         "investable": investable, "max_position_pct": cap_pct, "cap": cap,
@@ -357,7 +357,7 @@ def orders_from(result, source=""):
     """Proposed buy orders, one per position, in Alpaca place_stock_order shape."""
     out = []
     for p in result["positions"]:
-        if p["dollars"] <= 0:
+        if p["eur"] <= 0:
             continue
         why = "%.2f%% of the stock sleeve" % p["weight"]
         if source:
@@ -368,7 +368,7 @@ def orders_from(result, source=""):
         if result["whole_shares"]:
             o["qty"] = str(int(p["shares"]))
         else:
-            o["notional"] = _num(p["dollars"])
+            o["notional"] = _num(p["eur"])
         if p.get("check_ticker"):
             o["check_ticker"] = True
         o.update({"type": "market", "time_in_force": "day", "why": why})
@@ -414,12 +414,12 @@ def report(result, orders, source=""):
                     money(r["investable"]), _num(r["max_position_pct"]), money(r["cap"])))
     lines.append("")
     has_price = any("price" in p for p in r["positions"])
-    head = "%-7s %-22s %8s %11s" % ("ticker", "name", "weight", "dollars")
+    head = "%-7s %-22s %8s %11s" % ("ticker", "name", "weight", "euro")
     if has_price:
         head += " %10s %10s" % ("price", "shares")
     lines.append(head + "  note")
     for p in r["positions"]:
-        row = "%-7s %-22s %7.2f%% %11s" % (p["ticker"], (p["name"] or "")[:22], p["weight"], money(p["dollars"]))
+        row = "%-7s %-22s %7.2f%% %11s" % (p["ticker"], (p["name"] or "")[:22], p["weight"], money(p["eur"]))
         if has_price:
             row += " %10s %10s" % (money(p["price"]) if "price" in p else "", p.get("shares", ""))
         if p["capped"]:

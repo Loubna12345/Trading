@@ -29,7 +29,7 @@ def rows(path):
 
 
 def dollars(result):
-    return {p["ticker"]: p["dollars"] for p in result["positions"]}
+    return {p["ticker"]: p["eur"] for p in result["positions"]}
 
 
 def run(argv):
@@ -134,8 +134,8 @@ class Rules(unittest.TestCase):
         self.assertTrue(r["whole_shares"])
         for p in r["positions"]:
             self.assertEqual(p["shares"], int(p["shares"]))
-            self.assertAlmostEqual(p["dollars"], p["shares"] * PRICES[p["ticker"]], places=2)
-            self.assertLessEqual(p["dollars"], 1250)
+            self.assertAlmostEqual(p["eur"], p["shares"] * PRICES[p["ticker"]], places=2)
+            self.assertLessEqual(p["eur"], 1250)
         self.assertAlmostEqual(r["invested"] + r["idle"], 4500, places=2)
         self.assertLess(r["idle"], min(PRICES.values()) * 2)
         orders = size.orders_from(r)

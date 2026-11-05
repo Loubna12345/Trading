@@ -56,6 +56,26 @@ class Repo(unittest.TestCase):
             for b in bad:
                 self.assertNotIn(b, low, "%s mentions %r" % (os.path.relpath(path, ROOT), b))
 
+    def test_no_us_only_leftovers_in_the_european_edition(self):
+        bad = ("pelosi", "lots.py", "wash sale", "short term", "long term", "_usd", "irs ", "ptr.py")
+        for path in text_files():
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                low = fh.read().lower()
+            for b in bad:
+                self.assertNotIn(b, low, "%s still mentions %r" % (os.path.relpath(path, ROOT), b))
+
+    def test_readme_lists_every_skill(self):
+        with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as fh:
+            text = fh.read()
+        for s in SKILLS:
+            self.assertIn(s, text, "README does not mention %s" % s)
+
+    def test_europe_doc_exists_and_names_its_sources(self):
+        with open(os.path.join(ROOT, "docs", "EUROPE.md"), encoding="utf-8") as fh:
+            text = fh.read()
+        for needle in ("§ 32d", "§ 20 Abs. 4", "§ 43a", "InvStG", "VIII R 31/23", "2 BvL 3/21", "Deutsche Boerse"):
+            self.assertIn(needle, text)
+
     def test_paper_trading_is_the_default(self):
         with open(os.path.join(ROOT, "trader-budget", "config.example.json")) as fh:
             cfg = json.load(fh)

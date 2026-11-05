@@ -235,7 +235,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, pric
         if tif not in TIFS:
             reasons.append("format: unknown time_in_force %r" % tif)
         if notional is not None and (typ != "market" or tif != "day"):
-            reasons.append("format: a notional (dollar) order must be a market order with time_in_force day")
+            reasons.append("format: a notional (amount in euro) order must be a market order with time_in_force day")
         if typ in ("limit", "stop_limit") and o.get("limit_price") is None:
             reasons.append("format: a %s order needs a limit_price" % typ)
         if typ in ("stop", "stop_limit") and o.get("stop_price") is None:
@@ -280,7 +280,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, pric
         if sym in blocked:
             reasons.append("blocked: %s is on your blocked list" % sym)
 
-        # dollar value of the order
+        # value of the order in euro
         ref = None
         if typ in ("limit", "stop_limit"):
             ref = _f(o.get("limit_price"))

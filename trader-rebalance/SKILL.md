@@ -60,7 +60,7 @@ python3 "${CLAUDE_SKILL_DIR}/rebalance.py" --json
 
 ## Steps
 
-1. Refresh prices: trader-alerts `alerts.py quote --holdings --write`.
+1. Refresh prices: trader-alerts `alerts.py quote --holdings --fx USD=RATE --fx-date DATE --write` (euro prices; the rate is read from the ECB the same day).
 2. Run `rebalance.py` and show the drift table in plain words: which stocks
    are over or under, by how many points, and what it would trade.
 3. Before any sell, run trader-tax (`steuer.py sell TICKER SHARES --price P`) and show

@@ -97,7 +97,7 @@ def flagged_tickers(doc):
 
 
 def capped_targets(weights, sleeve, cap):
-    """Dollar target per ticker, proportional to weight, none above the cap."""
+    """Euro target per ticker, proportional to weight, none above the cap."""
     alloc, active, money_left = {}, dict(weights), sleeve
     while active:
         wsum = sum(active.values())

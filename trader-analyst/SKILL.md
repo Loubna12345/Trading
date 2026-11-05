@@ -15,6 +15,11 @@ argument-hint: "[tickers]"
 
 # trader-analyst
 
+> **Europe note.** This skill reads US company filings (10-Q, 10-K) on SEC EDGAR. It does not read a German or
+> French company's annual report, and a ticker like SAP.DE has no filings there under that name (some European
+> companies with a US listing file other forms, which this skill is not built for). For European companies use
+> the company's own investor relations pages and say that this skill does not cover them.
+
 Earnings season moves stocks, and the press release is written to put the
 best number first. This skill reads the numbers the company actually filed
 with the SEC, lines them up quarter by quarter, and says plainly what changed.
