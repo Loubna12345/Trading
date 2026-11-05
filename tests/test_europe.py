@@ -16,6 +16,8 @@ from _load import load, FIX
 
 alerts = load("trader-alerts", "alerts")
 risk = load("trader-risk", "check")
+size = load("trader-budget", "size")
+rebalance = load("trader-rebalance", "rebalance")
 QDIR = os.path.join(FIX, "trader-alerts")
 
 
@@ -342,6 +344,45 @@ class EuropeanAssets(unittest.TestCase):
     def test_a_ucits_etf_on_xetra_passes(self):
         self.assertEqual(asset("EUNL.DE")[0], "PASS")
         self.assertEqual(asset("VWCE.DE")[0], "PASS")
+
+
+class SizingNeedsEuroPrices(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def write(self, doc):
+        p = os.path.join(self.tmp, "prices.json")
+        json.dump(doc, open(p, "w"))
+        return p
+
+    def test_budget_accepts_euro_prices(self):
+        p = self.write({"currency": "EUR", "prices": {"SAP.DE": 142.3}})
+        self.assertEqual(size.load_prices(p), {"SAP.DE": 142.3})
+
+    def test_budget_refuses_prices_that_do_not_say_euro(self):
+        for doc in ({"prices": {"KO": 90.0}}, {"KO": 90.0}, {"currency": "USD", "prices": {"KO": 90.0}},
+                    {"currency": "eur ", "prices": {"KO": 1}}):
+            with self.subTest(doc=doc):
+                if doc.get("currency", "").strip().upper() == "EUR":
+                    self.assertEqual(size.load_prices(self.write(doc)), {"KO": 1.0})
+                    continue
+                with self.assertRaises(size.SizeError) as cm:
+                    size.load_prices(self.write(doc))
+                self.assertIn("euro", str(cm.exception))
+
+    def test_rebalance_refuses_prices_that_do_not_say_euro(self):
+        pf = os.path.join(self.tmp, "pf.json")
+        json.dump({"cash": 1000, "positions": []}, open(pf, "w"))
+        tg = os.path.join(self.tmp, "tg.json")
+        json.dump({"targets": [{"ticker": "KO", "weight": 100}]}, open(tg, "w"))
+        pr = self.write({"prices": {"KO": 90.0}})
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = rebalance.main(["--portfolio", pf, "--targets", tg, "--prices", pr, "--config",
+                                   os.path.join(self.tmp, "none.json")])
+        self.assertEqual(code, 1)
+        self.assertIn("euro", err.getvalue())
 
 
 if __name__ == "__main__":

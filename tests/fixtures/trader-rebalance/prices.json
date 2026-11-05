@@ -1,7 +1,8 @@
 {
   "as_of": "2026-10-13T20:00:01Z",
   "source": "yahoo",
-  "note": "Regular-session closes on 2026-10-13 from query1.finance.yahoo.com/v8/finance/chart (fixture)",
+  "currency": "EUR",
+  "note": "Fixture: the numbers are treated as euro prices (they were dollar closes, only the shape matters here)",
   "prices": {
     "AAPL": 341.27,
     "AXP": 309.84,

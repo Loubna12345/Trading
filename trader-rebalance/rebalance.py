@@ -293,7 +293,10 @@ def main(argv=None):
     try:
         cfg = read_json(a.config, "config", required=False) or {}
         portfolio = read_json(a.portfolio, "portfolio (your holdings and cash)")
-        pdoc = read_json(a.prices, "prices (trader-alerts: alerts.py quote --holdings --write)")
+        pdoc = read_json(a.prices, "prices (trader-alerts: alerts.py quote --holdings --fx USD=RATE --fx-date DATE --write)")
+        if not isinstance(pdoc, dict) or str(pdoc.get("currency", "")).strip().upper() != "EUR":
+            raise RebalanceError("%s does not say its prices are in euro (\"currency\": \"EUR\"); refresh it with "
+                                 "trader-alerts: alerts.py quote --holdings --fx USD=RATE --fx-date DATE --write" % a.prices)
         prices = {str(k).upper(): float(v) for k, v in (pdoc.get("prices", pdoc) or {}).items()
                   if isinstance(v, (int, float))}
         targets_doc = read_json(a.targets, "targets")

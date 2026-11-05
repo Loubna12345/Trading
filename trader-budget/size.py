@@ -131,7 +131,11 @@ def load_prices(path):
     if not path:
         return {}
     data = read_json(path, "prices")
-    prices = data.get("prices", data) if isinstance(data, dict) else {}
+    if not isinstance(data, dict) or str(data.get("currency", "")).strip().upper() != "EUR":
+        raise SizeError("%s does not say its prices are in euro (\"currency\": \"EUR\"); sizing in the wrong "
+                        "currency would buy the wrong amount. Refresh it with trader-alerts: alerts.py quote ... "
+                        "--fx USD=RATE --fx-date DATE --write" % path)
+    prices = data.get("prices", data)
     out = {}
     for t, p in prices.items():
         try:

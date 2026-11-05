@@ -82,7 +82,7 @@ class UnverifiedTickerGuess(unittest.TestCase):
         d = tempfile.mkdtemp()
         w = lambda name, doc: json.dump(doc, open(os.path.join(d, name), "w"))
         w("pf.json", {"cash": 5000, "positions": []})
-        w("px.json", {"as_of": "2026-11-05T10:00:00Z", "prices": {"AAPL": 341.27, "KO": 90.11}})
+        w("px.json", {"as_of": "2026-11-05T10:00:00Z", "currency": "EUR", "prices": {"AAPL": 341.27, "KO": 90.11}})
         w("tg.json", {"weights": [{"ticker": "AAPL", "weight": 60}, {"ticker": "KO", "weight": 40, "check_ticker": True}]})
         w("cfg.json", {"paper": True})
         out = os.path.join(d, "orders.json")
