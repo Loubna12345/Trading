@@ -226,6 +226,13 @@ class Quality(unittest.TestCase):
         q = history.quality(b + b2, 60, always_open=True)
         self.assertGreater(q["missing_bars"], 0)
 
+    def test_a_wild_bar_gives_a_warning_and_is_listed(self):
+        b = self.bars(n=12)
+        b[5]["h"] = b[5]["h"] * 3
+        q = history.quality(b, 5)
+        self.assertEqual(q["verdict"], "WARN")
+        self.assertEqual(q["suspicious_bars"][0][0], b[5]["t"])
+
     def test_too_few_bars_is_not_ok(self):
         q = history.quality(self.bars(n=2), 5)
         self.assertEqual(q["verdict"], "WARN")

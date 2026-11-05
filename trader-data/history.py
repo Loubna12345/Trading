@@ -246,6 +246,11 @@ def quality(bars, interval_min, always_open=False):
     share = missing / expected if expected else 0.0
     notes = []
     verdict = "OK"
+    wild = engine.suspicious_bars(bars) if bars else []
+    if wild:
+        verdict = "WARN"
+        notes.append("%d bar(s) have a high more than 20%% above the low, often a bad tick; first: %s. "
+                     "Look at them before testing on this series." % (len(wild), wild[0][0]))
     if len(bars) < MIN_BARS:
         verdict = "WARN"
         notes.append("Only %d bars (fewer than %d): too little to test on." % (len(bars), MIN_BARS))
@@ -255,7 +260,7 @@ def quality(bars, interval_min, always_open=False):
                      % (share * 100, MAX_MISSING_SHARE * 100))
     return {"verdict": verdict, "n_bars": len(bars), "first": bars[0]["t"] if bars else None,
             "last": bars[-1]["t"] if bars else None, "missing_bars": missing,
-            "missing_share": share, "gaps": gaps[:20], "notes": notes}
+            "missing_share": share, "gaps": gaps[:20], "suspicious_bars": wild[:20], "notes": notes}
 
 
 # ---------- keeping the store current ----------

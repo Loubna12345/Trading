@@ -290,6 +290,17 @@ class Benchmark(unittest.TestCase):
         self.assertLess(paid["equity"][-1], free["equity"][-1])
 
 
+class Suspicious(unittest.TestCase):
+    def test_flags_a_bar_whose_range_is_huge(self):
+        bars = day_bars("2026-01-05", [10, 10, 10, 10])
+        bars[2]["h"] = 20.0
+        out = engine.suspicious_bars(bars, limit=0.20)
+        self.assertEqual([t for t, _ in out], [bars[2]["t"]])
+
+    def test_quiet_bars_are_not_flagged(self):
+        self.assertEqual(engine.suspicious_bars(day_bars("2026-01-05", [10, 10.1, 10.2]), limit=0.20), [])
+
+
 class Report(unittest.TestCase):
     def test_report_has_strategy_benchmark_and_costs(self):
         bars = day_bars("2026-01-05", [10, 11, 12, 13, 12, 14])

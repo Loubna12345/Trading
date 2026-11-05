@@ -64,6 +64,12 @@ def check_bars(bars):
         last_t = b["t"]
 
 
+def suspicious_bars(bars, limit=0.20):
+    """Bars whose high is more than `limit` above their low: often a bad tick, not a real move. Returns
+    [(time, range)]. Such a bar can create a profit that never existed, so look at each one by eye."""
+    return [(b["t"], b["h"] / b["l"] - 1.0) for b in bars if b["h"] / b["l"] - 1.0 > limit]
+
+
 def make_costs(*, commission_bps, spread_bps, slippage_bps, fixed_fee):
     c = {"commission_bps": commission_bps, "spread_bps": spread_bps,
          "slippage_bps": slippage_bps, "fixed_fee": fixed_fee}
