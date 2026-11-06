@@ -283,6 +283,19 @@ class Whole(unittest.TestCase):
                                 train_days=5, test_days=2, earlier_trials=40)
         self.assertEqual(rep["n_trials"], 41)
 
+    def test_earlier_trials_raise_the_bar_even_with_one_setting(self):
+        # With one setting there is no spread of Sharpe ratios across trials in this run. Earlier tries must
+        # still count, so the luck level comes from the sampling noise of a Sharpe ratio with no edge.
+        bars = drifting(3, 0.0002, n_days=40)
+        costs = engine.make_costs(commission_bps=0, spread_bps=0, slippage_bps=0, fixed_fee=0)
+        kw = dict(flatten_eod=True, train_days=10, test_days=5)
+        one = validate.validate(bars, "trend", {"window": [5]}, costs, 252 * 34, earlier_trials=0, **kw)
+        many = validate.validate(bars, "trend", {"window": [5]}, costs, 252 * 34, earlier_trials=40, **kw)
+        self.assertIsNotNone(one["deflated_sharpe"])
+        self.assertLess(many["deflated_sharpe"], one["deflated_sharpe"])
+        self.assertEqual(many["trial_variance_source"], "sampling noise of a zero-edge Sharpe ratio")
+        self.assertEqual(one["trial_variance_source"], "not needed (one trial)")
+
     def test_grid_is_the_cartesian_product_and_is_capped(self):
         g = validate.expand_grid({"band_bps": [1, 2], "warmup": [5, 6, 7]})
         self.assertEqual(len(g), 6)

@@ -288,6 +288,17 @@ def validate(bars, name, grid, costs, periods_per_year, flatten_eod=False, train
         wf = None
         notes.append("walk-forward not computed: %s" % e)
 
+    # The luck level needs the spread of Sharpe ratios across trials. With fewer than two trials in this run
+    # there is no spread to measure, yet earlier trials still count, so use the sampling variance of a Sharpe
+    # ratio with no edge, 1/(n-1): the same term deflated_sharpe uses for a zero Sharpe ratio.
+    if n_trials <= 1:
+        var_source = "not needed (one trial)"
+    elif len(trial_srs) > 1:
+        var_source = "spread across the settings tried here"
+    else:
+        var_source = "sampling noise of a zero-edge Sharpe ratio"
+        var_sr = 1.0 / (len(best_alpha) - 1) if len(best_alpha) >= 2 else 0.0
+
     dsr = None
     if best_sr is not None and len(best_alpha) >= 3:
         skew, kurt = moments(best_alpha)
@@ -310,7 +321,7 @@ def validate(bars, name, grid, costs, periods_per_year, flatten_eod=False, train
     verdict["reasons"] = notes + verdict["reasons"]
     return {"verdict": verdict["verdict"], "reasons": verdict["reasons"], "checks": verdict["checks"],
             "best_params": best_params, "beta_to_buy_and_hold": best_beta, "suspicious_bars": wild[:20],
-            "n_trials": n_trials, "settings_tried_here": len(combos),
+            "n_trials": n_trials, "settings_tried_here": len(combos), "trial_variance_source": var_source,
             "break_even_extra_bps": be, "delay_scan": scan, "walk_forward": wf, "deflated_sharpe": dsr,
             "best_net_return": values["net_return"], "best_trades": values["n_trades"],
             "benchmark": metrics.summarize(bench["equity"], [], periods_per_year, min_trades=0),

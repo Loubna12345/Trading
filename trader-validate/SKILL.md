@@ -38,7 +38,9 @@ Strategies come from /trader-strategies, bars from /trader-data, costs from the 
 
 The thresholds (100 trades, 0.95, 2x costs) are this project's choices, not sourced numbers. The deflated
 Sharpe formula follows Bailey and Lopez de Prado as implemented in the endgame library; the paper itself was
-not read. It also reports the break-even cost: the extra cost per side, in basis points, at which the result
+not read. The discount needs the spread of Sharpe ratios across trials; when only one setting is tried here
+but earlier trials are given, that spread cannot be measured, so the sampling noise of a Sharpe ratio with no
+edge, 1/(n-1), is used instead (`trial_variance_source` in the output says which). It also reports the break-even cost: the extra cost per side, in basis points, at which the result
 reaches zero.
 
 FAIL means a hard check failed. INCONCLUSIVE means nothing failed outright but the evidence is too thin
