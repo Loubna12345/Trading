@@ -1,6 +1,6 @@
 # Progress and handoff
 
-Last updated 2026-11-05. Read this first in a new session. It says what exists, what was decided, what is
+Last updated 2026-11-06. Read this first in a new session. It says what exists, what was decided, what is
 unverified, and what comes next. Everything below is in this repo; nothing depends on a chat.
 
 ## Who and what
@@ -30,6 +30,7 @@ documented.
 | 3 | `trader-strategies` | done: trend, opening-range breakout, VWAP reversion, long-only, no default parameters |
 | 4 | `trader-validate` | done: cost stress, delay scan, walk-forward, deflated Sharpe on the alpha, trade count, recent stretch, bad-bar check; verdict PASS/FAIL/INCONCLUSIVE |
 | B | `trader-training` | built (see below); only tested on made-up data |
+| B3 | `trader-agent` | built (2026-11-06): a model as a rule via the Claude API, judged by code with criteria locked in the ledger; never run against a real model yet (no API key set) |
 | B2 | `trader-replay` | built: weekly replay with hidden stock and dates, forecast and rule logged before each reveal, sealed last third, one final test per rule, HTML report; first run on SAP done (see below) |
 | 5 | asset profiles | not started: hours, costs, tax and limits per stocks, ETFs, crypto; crypto needs its own tax module |
 | 6 | journal and paper broker | not started: Trading 212 demo adapter behind the risk check and approval |
@@ -61,17 +62,23 @@ hourly bars on 5 to 10 stocks first.
 - She wants honest results: most day traders lose money after costs (docs/RESEARCH.md); PASS is only permission to
   try a rule on paper money.
 
-## Agent-versus-rules comparison (agreed 2026-11-06, not yet built beyond the replay)
+## Agent-versus-rules comparison (built 2026-11-06, `trader-agent`)
 
-She wants two arms judged from outside: fixed rules, and an agent called through code with only the allowed
-context (anonymous bars up to the decision, fixed answer format, answers logged before scoring, notes file
-logged). A script judges with a comparison locked in advance (net result after costs vs the rule arm and vs
-buy-and-hold, plus a significance test), not Claude. Plan: replay tool (done), agent runner using the Claude API
-(needs her own API key kept on her computer, never in chat; hard budget cap), judge script. Suggested models:
-Haiku 5.5 for rehearsal, Sonnet 5.5 for the judged run, Fable 5.1 only as a later challenger. Costs quoted from the
-pricing page on 2026-11-06 (USD per million tokens, in/out): Haiku 0.10/0.50, Sonnet 2/10, Opus 4/20, Fable 10/50.
-A replay on past data cannot cleanly test an agent that may remember the period; only data after its knowledge
-ends, and paper trading going forward, count.
+Two arms judged from outside: a named rule, and a model called through code. `agent.py`: once per trading day,
+after the day's first two bars, the model gets only anonymized basis-point moves (last 5 days plus today so far),
+the cost per trade side and a fixed instruction, and answers JSON `{"position": 0|1, "reason": ...}`; held to the
+close. No ticker, dates or times. Every answer goes to a hash-chained ledger in `<replay>/agent/` keyed by the
+prompt hash, so reruns are free and reproducible; an unusable answer is retried once then counts as flat; a hard
+budget (dollars, from reported token usage) stops the run and a rerun continues. The key is read only from the
+environment variable `ANTHROPIC_API_KEY` on her computer, never printed or logged. `judge.py`: `lock` writes
+window (open or sealed), rule, model, prompt hash, budget, seed and verdict criteria into the replay ledger before
+any run; `run` scores agent, rule, flat and the stock on the same backtester and costs; `status`. Verdict: at
+least 20 weeks, paired bootstrap p below 0.05 on weekly differences, total gap at least 1 point, winner profitable
+after costs; else NO CLEAR DIFFERENCE or INCONCLUSIVE. Open window can be rerun free from cache; sealed window
+runs once and uses up that folder's final test. Rehearse with Haiku in a separate scratch replay folder.
+Models and prices (USD per million tokens in/out, from the pricing page on 2026-11-06): Haiku 5.5 0.10/0.50,
+Sonnet 5.5 2/10, Opus 4/20, Fable 5.1 10/50. Limit: a model that remembers the period may recognise it despite
+hidden names and dates; only data after its knowledge and paper trading going forward count cleanly.
 
 ## Real-data findings (2026-11-06)
 
@@ -89,7 +96,7 @@ staying out 0. Trend (window 6) about break-even after costs (-0.3%, 132 trades,
 (25 bps, warmup 4) -5.8%. Assumptions: A (momentum after a rising week) direction right 11 of 22, B (rebound after
 a fall) 6 of 20 and the stock kept falling, C (stay out after a flat week) neutral, D (stay out after a drop of 5%
 or more, added after seeing the week-13 loss) missed a +24.8% rebound over its 6 weeks. Return forecasts no better
-than always zero; direction right 29 of 63 against 31 for always-up. Overnight gaps -15.2% and intraday -19.0% over
+than always zero; direction right 29 of 63 against 31 for always-up. Cost sensitivity on those weeks: no costs +1.9%, run costs -6.1%, double costs -13.4%, with Trading 212's 0.15% FX fee -49.1%. Trading 212 is commission-free but charges 0.15% when the instrument currency differs from the account currency; its spread is not published, so spread and slippage stay assumptions. Overnight gaps -15.2% and intraday -19.0% over
 the stretch, so the early guess that overnight dominated did not hold. No edge found; a falling stock favours
 anything that is often out of the market. Per-week buy-and-hold in the ledger skips each week's first bar and the
 gap before it; the report uses the true move. SAP's open weeks are now seen by Claude, so use other stocks for a
@@ -108,14 +115,17 @@ clean replay. Costs must be confirmed from her broker's price list before a real
 
 ## Next
 
-1. Her real data (hourly bars, several stocks): run the training protocol and report honestly, including FAIL.
-2. Step 5 asset profiles, then crypto tax module.
-3. Steps 6 to 8.
-4. Parked: script-gate redesign, daily loss limit and kill switch, untrusted-news handling, Trading 212 adapter.
-
-To get the data she runs (on her computer):
-`python3 trader-data/history.py fetch yahoo SAP.DE --interval 60 --days 730 --store trader/history`
-and sends the CSV files from `trader/history/`.
+1. Her side: `git pull` in `~/Documents/trading/repo`; create an Anthropic API key with a monthly limit and set
+   `ANTHROPIC_API_KEY` in her own Terminal (never in chat).
+2. More data: download SIE.DE, ALV.DE, BAS.DE, DTE.DE
+   (`python3 trader-data/history.py fetch yahoo SYM --interval 60 --days 700 --store ../history`).
+3. Confirm Trading 212 spread and slippage so the placeholder costs (0 / 2 / 1 bps) can be replaced.
+4. Haiku rehearsal of the agent comparison in a scratch replay folder, then a locked Sonnet run: open window first,
+   sealed window once, on a stock Claude has not seen.
+5. Training protocol on the multi-stock data; report honestly including FAIL.
+6. Step 5 asset profiles, then the crypto tax module; steps 6 to 8.
+7. Parked: script-gate redesign, daily loss limit and kill switch, untrusted-news handling, Trading 212 adapter;
+   merge of `europe` / `learning-agent` into `main` is her decision.
 
 ## Working rules used throughout
 
