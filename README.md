@@ -30,6 +30,7 @@ docs/FINDINGS.md are closed.
 | trader-validate | Says PASS, FAIL or INCONCLUSIVE for a rule: doubled costs, late orders, walk-forward, deflated Sharpe, trade count (step 4 of docs/ROADMAP.md) |
 | trader-training | Runs the rules over many stocks of real data under a locked plan, a tamper-evident ledger, confirmation stocks, a chance rate and an untouched holdout (bonus step of docs/ROADMAP.md) |
 | trader-replay | Plays saved data back one week at a time with the stock and dates hidden: a rule is written down before each week is shown, then scored with costs; the last third stays sealed for one final test per rule |
+| trader-agent | Runs a language model as a trading rule on the same anonymized weeks, costs and backtester as a normal rule, and judges the two from outside with criteria locked in the ledger before the run; budget-capped, answers cached |
 | trader-copycat | Rebuilds a US fund's 13F portfolio as targets (US-listed stocks only) |
 | trader-analyst, trader-screener, trader-news | Read US company filings (SEC); US-listed companies only |
 

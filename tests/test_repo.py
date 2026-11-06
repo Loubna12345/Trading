@@ -8,7 +8,7 @@ from _load import ROOT
 SKILLS = ["trader-copycat", "trader-news", "trader-budget", "trader-insiders", "trader-analyst",
           "trader-screener", "trader-risk", "trader-broker", "trader-tax", "trader-alerts",
           "trader-rebalance", "trader-backtest", "trader-data", "trader-strategies",
-          "trader-validate", "trader-training", "trader-replay"]
+          "trader-validate", "trader-training", "trader-replay", "trader-agent"]
 ORDER_PATH = ["trader-copycat", "trader-budget", "trader-risk", "trader-broker",
               "trader-tax", "trader-alerts", "trader-rebalance"]
 
