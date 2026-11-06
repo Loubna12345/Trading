@@ -101,8 +101,10 @@ def build(folder):
               "average_week": (g["prod"] - 1.0) / g["weeks"], "winning_weeks": g["wins"], "trades": g["trades"],
               "costs_paid": g["costs"]} for g in sorted(by_rule.values(), key=lambda g: g["rule"])]
 
+    sens = [{"key": key, "label": text, "per_side_bps": per_side_bps(c),
+             "total_return": _rescore(plan, blind, weeks, rows, c)} for key, text, c in scenarios(plan["costs"])]
     s = replay.status(folder)
-    return {"weeks": rows, "first_week": first, "revealed_through": st["revealed"], "weeks_total": plan["weeks"],
+    return {"sensitivity": sens, "weeks": rows, "first_week": first, "revealed_through": st["revealed"], "weeks_total": plan["weeks"],
             "weeks_open": plan["weeks"] - plan["sealed_weeks"], "weeks_sealed": plan["sealed_weeks"],
             "finals_run": len(st["finals"]), "costs": plan["costs"], "cum_rules": cum_rules,
             "cum_stock": cum_stock, "rules_total": cum_rules[-1], "stock_total": cum_stock[-1],
@@ -114,6 +116,35 @@ def build(folder):
 def rule_label(strategy, params):
     p = ", ".join("%s=%s" % (k, v) for k, v in sorted(params.items()))
     return strategy + (" (%s)" % p if p else "")
+
+
+def _scaled(costs, k):
+    return {name: v * k for name, v in costs.items()}
+
+
+def per_side_bps(costs):
+    return costs["spread_bps"] / 2.0 + costs["slippage_bps"] + costs["commission_bps"]
+
+
+FX_FEE_BPS = 15.0   # 0.15% conversion fee per trade, as Trading 212 states it for an instrument in another currency
+
+
+def scenarios(costs):
+    zero = {k: 0.0 for k in costs}
+    fx = dict(costs, commission_bps=costs["commission_bps"] + FX_FEE_BPS)
+    return [("none", "No costs at all", zero), ("run", "The costs used in this run", dict(costs)),
+            ("double", "Twice the costs of this run", _scaled(costs, 2.0)),
+            ("fx", "What-if: stock in another currency than the account (0.15% conversion fee on each trade, "
+                   "on top of this run's costs)", fx)]
+
+
+def _rescore(plan, blind, weeks, rows, costs):
+    p = dict(plan, costs=costs)
+    total = 1.0
+    for w in rows:
+        a, b = weeks[w["week"] - 1]
+        total *= 1.0 + replay._score(p, blind, a, b, w["strategy"], w["params"])["strategy_return"]
+    return total - 1.0
 
 
 def pct(x, signed=True, digits=1):
@@ -331,7 +362,7 @@ def _row(w):
                 html.escape(w["note"])))
 
 
-def render(d, label=""):
+def render(d, label="", cost_note=""):
     n = len(d["weeks"])
     f = d["forecast"]
     cum = {"weeks": [w["week"] for w in d["weeks"]], "rules": [pct(v) for v in d["cum_rules"]],
@@ -378,6 +409,15 @@ def render(d, label=""):
             html.escape(r["label"]), r["weeks"], pct(r["total_return"]), pct(r["average_week"], True, 2),
             r["winning_weeks"], r["trades"], r["costs_paid"]))
     parts.append("</table></div><p class=\"sub\">Costs are in currency units on a 10,000 account.</p>")
+    parts.append("<h2>What costs do to this result</h2><p>The same rules and the same weeks, re-scored with different "
+                 "costs (the choices were not changed).</p><div class=\"scroll\"><table><tr><th class=\"l\">Costs</th>"
+                 "<th>Per trade side</th><th>Rules, total</th></tr>")
+    for x in d["sensitivity"]:
+        parts.append("<tr><td class=\"l\">%s</td><td>%.1f bps</td><td>%s</td></tr>" % (
+            html.escape(x["label"]), x["per_side_bps"], pct(x["total_return"])))
+    parts.append("</table></div>")
+    if cost_note:
+        parts.append("<p>%s</p>" % html.escape(cost_note))
     if f.get("weeks"):
         parts.append("<h2>Were the forecasts any good?</h2><div class=\"tiles\"><div class=\"tile\"><b>%s</b><span>Average "
                      "miss of the return forecast</span></div><div class=\"tile\"><b>%s</b><span>Average miss if always "
@@ -400,8 +440,8 @@ def render(d, label=""):
     return "".join(parts)
 
 
-def write(folder, out, label=""):
-    page = render(build(folder), label=label)
+def write(folder, out, label="", cost_note=""):
+    page = render(build(folder), label=label, cost_note=cost_note)
     with open(out, "w", encoding="utf-8") as fh:
         fh.write(page)
     return out
@@ -412,9 +452,10 @@ def main(argv=None):
     p.add_argument("--dir", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--label", default="")
+    p.add_argument("--cost-note", default="", help="plain text shown under the cost table, e.g. what the broker charges")
     a = p.parse_args(argv)
     try:
-        write(a.dir, a.out, a.label)
+        write(a.dir, a.out, a.label, a.cost_note)
     except ValueError as e:
         print("Refused: %s" % e, file=sys.stderr)
         return 2

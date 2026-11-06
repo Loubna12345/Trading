@@ -97,6 +97,34 @@ class Build(Played):
             report.build(self.dir)
 
 
+class Sensitivity(Played):
+    def test_rescoring_at_the_runs_own_costs_reproduces_the_ledger(self):
+        d = self.data()
+        own = [x for x in d["sensitivity"] if x["key"] == "run"][0]
+        self.assertAlmostEqual(own["total_return"], d["rules_total"], places=9)
+
+    def test_more_costs_never_help_and_zero_costs_is_the_ceiling(self):
+        d = self.data()
+        by = {x["key"]: x["total_return"] for x in d["sensitivity"]}
+        self.assertGreaterEqual(by["none"], by["run"] - 1e-12)
+        self.assertGreaterEqual(by["run"], by["double"] - 1e-12)
+        self.assertGreaterEqual(by["double"], by["fx"] - 1e-12)
+
+    def test_per_side_cost_is_spread_half_plus_slippage_plus_commission(self):
+        d = self.data()
+        by = {x["key"]: x["per_side_bps"] for x in d["sensitivity"]}
+        self.assertAlmostEqual(by["none"], 0.0)
+        self.assertAlmostEqual(by["run"], 2.0 / 2 + 1.0)
+        self.assertAlmostEqual(by["double"], 2 * (2.0 / 2 + 1.0))
+        self.assertAlmostEqual(by["fx"], 2.0 / 2 + 1.0 + 15.0)
+
+    def test_the_section_and_the_note_are_in_the_page_and_escaped(self):
+        h = report.render(self.data(), cost_note="Commission-free <i>says</i> the broker")
+        self.assertIn("What costs do to this result", h)
+        self.assertIn("&lt;i&gt;says&lt;/i&gt;", h)
+        self.assertNotIn("<i>says</i>", h)
+
+
 class Verdict(unittest.TestCase):
     def base(self, **over):
         d = {"weeks": [{}] * 63, "rules_total": -0.06, "stock_total": -0.31,
