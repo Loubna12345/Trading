@@ -102,6 +102,18 @@ anything that is often out of the market. Per-week buy-and-hold in the ledger sk
 gap before it; the report uses the true move. SAP's open weeks are now seen by Claude, so use other stocks for a
 clean replay. Costs must be confirmed from her broker's price list before a real replay.
 
+The replay folder was made in a sandbox and stored that sandbox's data path; on her Mac it would not open. It was
+moved with `replay.py relocate --dir replay-dryrun --source history/SAP.DE_60m.csv` (2026-11-06): same SHA-256,
+logged in the ledger, plan untouched. `play_week.py` now finds the replay next to itself.
+
+## Fixes on 2026-11-06 (after reading the code)
+
+- `trader-validate`: with one setting tried, the deflated Sharpe ignored `--earlier-trials` (no spread of Sharpe
+  ratios across trials, so the luck level was 0). It now uses the sampling variance of a zero-edge Sharpe ratio,
+  1/(n-1), and reports `trial_variance_source`. Still open: with several similar settings the measured spread is
+  small and understates luck; changing that would move existing pass rates.
+- `trader-replay`: new `relocate` command (above).
+
 ## Unverified or open
 
 - Live downloads from Yahoo and Kraken, Yahoo's real intraday limits, and data delays: untested.
@@ -112,6 +124,9 @@ clean replay. Costs must be confirmed from her broker's price list before a real
 - All validation so far is on made-up data. All thresholds (100 trades, 0.95, 2x costs, 20% bar range, last third,
   significance 0.05) are this project's choices.
 - Merge of `europe` / `learning-agent` into `main`: her decision.
+- The training holdout test needs every stock to hold when there are 6 stocks (binomial at 0.5, p < 0.05); 5 of 6
+  is DOES NOT HOLD. Use more stocks or accept that.
+- The ledgers detect edits, not a rewrite with recomputed hashes; keep an outside copy.
 
 ## Next
 
