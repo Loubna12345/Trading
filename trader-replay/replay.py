@@ -306,7 +306,9 @@ def _score_fn(plan, blind, a, b, fn, flatten_eod=None, fractional=False):
             ref = f["price"] / (1.0 + f["side"] * adv)
             paid += f["cost"] + f["qty"] * abs(f["price"] - ref)
     bh = engine.buy_and_hold(blind[a:b], costs, capital=CAPITAL)
+    ref = blind[a - 1]["c"] if a > 0 else blind[a]["o"]
     return {"strategy_return": eq[b - 1] / start_eq - 1.0, "buy_and_hold_return": bh["equity"][-1] / CAPITAL - 1.0,
+            "stock_move": blind[b - 1]["c"] / ref - 1.0,
             "trades": sum(1 for t in run["trades"] if t["exit_t"] >= t0), "costs_paid": paid, "bars": b - a,
             "start_equity": start_eq}
 
@@ -321,7 +323,7 @@ def reveal(folder, week):
         raise ValueError("write the rule for week %d first (predict); the ledger must hold it before the reveal" % week)
     a, b = weeks[week - 1]
     res = _score_fn(plan, blind, a, b, week_fn(plan, blind, weeks, st["predictions"], pred[0]))
-    actual_market = "up" if res["buy_and_hold_return"] > 0 else "down"
+    actual_market = "up" if res["stock_move"] > 0 else "down"     # from the previous close: what holding got
     res.update({"week": week, "kind": "result", "rule": pred[0]["rule"],
                 "expected_return": pred[0]["expect_return"],
                 "error": res["strategy_return"] - pred[0]["expect_return"],
@@ -355,10 +357,11 @@ def final(folder, strategy, params):
 def status(folder):
     plan, blind, weeks, entries = _open(folder)     # verifies the ledger; raises if it was changed
     st = _state(plan, entries)
-    total, bh = 1.0, 1.0
+    total, bh, held = 1.0, 1.0, 1.0
     for e in st["results"]:
         total *= 1.0 + e["strategy_return"]
         bh *= 1.0 + e["buy_and_hold_return"]
+        held *= 1.0 + e.get("stock_move", e["buy_and_hold_return"])
     n = len(st["results"])
     hits = sum(1 for e in st["results"] if e["direction_hit"])
     forecast = {"weeks": n}
@@ -376,7 +379,8 @@ def status(folder):
             "revealed_through": st["revealed"], "predictions": len(st["predictions"]),
             "rules_tried": len({e["rule"] for e in st["predictions"]}),
             "weeks_scored": len(st["results"]), "strategy_total_return": total - 1.0,
-            "buy_and_hold_total_return": bh - 1.0, "finals_run": len(st["finals"]),
+            "buy_and_hold_total_return": bh - 1.0, "stock_total_return": held - 1.0,
+            "finals_run": len(st["finals"]),
             "ledger_ok": True, "ledger_entries": len(entries)}
 
 

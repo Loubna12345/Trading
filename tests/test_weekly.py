@@ -24,13 +24,15 @@ class Fake:
         self.day, self.week_text, self.calls = day, week_text, []
 
     def __call__(self, prompt):
-        if prompt.startswith((weekly.WEEK_INSTRUCTIONS, weekly.WEEK_INSTRUCTIONS_OVERNIGHT)):
+        if prompt.startswith((weekly.WEEK_INSTRUCTIONS, weekly.WEEK_INSTRUCTIONS_OVERNIGHT,
+                              weekly.WEEK_INSTRUCTIONS_CRYPTO)):
             w = int(re.search(r"Now write your forecast for week (\d+)", prompt).group(1))
             self.calls.append(("week", w, prompt))
             text = self.week_text(w) if self.week_text else json.dumps(
                 {"expect_return": 0.001, "expect_market": "up", "plan": "plan %d" % w, "notebook": "NB-%d" % w})
             return text, dict(USAGE), "end_turn"
-        assert prompt.startswith((weekly.DAY_INSTRUCTIONS, weekly.DAY_INSTRUCTIONS_OVERNIGHT)), prompt[:80]
+        assert prompt.startswith((weekly.DAY_INSTRUCTIONS, weekly.DAY_INSTRUCTIONS_OVERNIGHT,
+                                  weekly.DAY_INSTRUCTIONS_CRYPTO)), prompt[:80]
         self.calls.append(("day", None, prompt))
         return json.dumps({"position": self.day(prompt), "reason": "because"}), dict(USAGE), "end_turn"
 
@@ -470,6 +472,79 @@ class Version2(Base):
                 weekly.run(self.dir, Fake())
         finally:
             weekly.WEEK_VERSION = old
+
+
+class Crypto(unittest.TestCase):
+    """24/7 market: weeks of 7 days, 24 hourly bars a day, one decision a day before the last hour."""
+
+    def setUp(self):
+        import datetime
+        import random
+        import tempfile
+        self.root = tempfile.mkdtemp()
+        rnd = random.Random(5)
+        day = datetime.date(2024, 1, 1)
+        px, rows = 100.0, []
+        for d in range(7 * 30):
+            for h in range(24):
+                o = px
+                px = o * (1 + rnd.gauss(0, 0.004))
+                rows.append("%sT%02d:00:00Z,%.6f,%.6f,%.6f,%.6f,%d" % (
+                    day.isoformat(), h, o, max(o, px) * 1.001, min(o, px) * 0.999, px, rnd.randint(0, 50)))
+            day += datetime.timedelta(days=1)
+        self.csv = os.path.join(self.root, "X.csv")
+        with open(self.csv, "w") as fh:
+            fh.write("t,o,h,l,c,v\n" + "\n".join(rows) + "\n")
+        self.dir = os.path.join(self.root, "c")
+        costs = {"commission_bps": 9.0, "spread_bps": 4.0, "slippage_bps": 2.0, "fixed_fee": 0.0}
+        replay.start(source=self.csv, folder=self.dir, costs=costs, periods_per_year=8760, days_per_week=7,
+                     holdout=0.34, overnight=True)
+
+    def test_lock_means_overnight_and_a_decision_before_the_last_hour(self):
+        e = weekly.lock(folder=self.dir, model=MODEL, budget=5.0, first_week=2, last_week=4, market="crypto")
+        self.assertTrue(e["overnight"])
+        self.assertEqual((e["market"], e["day_bars"], e["decide_at_bar"]), ("crypto", 24, 23))
+        self.assertEqual(e["context_hash"], weekly.context_hash(True, "crypto"))
+        self.assertNotEqual(weekly.context_hash(True, "crypto"), weekly.context_hash(True))
+
+    def test_the_model_sees_crypto_words_and_a_crypto_pattern_table(self):
+        weekly.lock(folder=self.dir, model=MODEL, budget=5.0, first_week=2, last_week=4, market="crypto")
+        fake = Fake(day=lambda p: 0.5)
+        weekly.run(self.dir, fake)
+        weeks = [p for kind, _, p in fake.calls if kind == "week"]
+        days = [p for kind, _, p in fake.calls if kind == "day"]
+        self.assertTrue(all(p.startswith(weekly.WEEK_INSTRUCTIONS_CRYPTO) for p in weeks))
+        self.assertTrue(all(p.startswith(weekly.DAY_INSTRUCTIONS_CRYPTO) for p in days))
+        self.assertEqual(len(days), 3 * 7)                       # one decision a day, seven days a week
+        self.assertNotIn("the stock", weeks[-1])
+        self.assertIn("second up day in a row", weeks[-1])
+        self.assertIn("simply holding the coin", weeks[-1])
+
+    def test_results_replay_and_money_match(self):
+        weekly.lock(folder=self.dir, model=MODEL, budget=5.0, first_week=2, last_week=4, market="crypto")
+        weekly.run(self.dir, Fake(day=lambda p: 1 if len(p) % 2 else 0.5))
+        rows = sorted((e for e in replay.T.ledger_read(self.dir) if e["kind"] == "agent_week_result"),
+                      key=lambda e: e["week"])
+        plan, blind, weeks, _ = replay._open(self.dir)
+        total = 1.0
+        for r in rows:
+            total *= 1.0 + r["strategy_return"]
+        self.assertAlmostEqual(weekly._rescore_agent(plan, blind, weeks, rows, plan["costs"], True, True),
+                               total - 1.0, places=12)
+        d = weekly.build(self.dir)
+        self.assertAlmostEqual(weekly.agent_money(self.dir, d, 500.0)["agent_end"], 500.0 * total, places=9)
+
+    def test_rules_replay_runs_on_seven_day_weeks(self):
+        other = os.path.join(self.root, "rules")
+        costs = {"commission_bps": 9.0, "spread_bps": 4.0, "slippage_bps": 2.0, "fixed_fee": 0.0}
+        replay.start(source=self.csv, folder=other, costs=costs, periods_per_year=8760, days_per_week=7,
+                     holdout=0.34, overnight=True)
+        replay.predict(other, 2, "hold", {}, 0.0, "up")
+        r2 = replay.reveal(other, 2)
+        replay.predict(other, 3, "hold", {}, 0.0, "up")
+        r3 = replay.reveal(other, 3)
+        self.assertEqual(r3["costs_paid"], 0.0)
+        self.assertEqual(r2["bars"], 7 * 24)
 
 
 if __name__ == "__main__":

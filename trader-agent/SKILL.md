@@ -77,6 +77,24 @@ python3 "${CLAUDE_SKILL_DIR}/weekly.py" compare --dir trader/replay/agent1 --rul
   with this code (use commit 2624c81).
 - Network errors, timeouts, 429 and 5xx are retried after 10, 30 and 90 seconds.
 
+- `lock --market crypto`: around the clock, weeks of 7 days, one decision a day before the last hour (UTC);
+  crypto wording and a crypto pattern table (no opening gaps); positions are always kept to the next decision.
+
+## A round of several assets (rounds.py)
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/rounds.py" setup --base ~/Documents/trading --name crypto1 --market crypto \
+  --asset BTC-EUR=history/BTC-EUR_60m.csv --asset ETH-EUR=history/ETH-EUR_60m.csv \
+  --commission-bps 9 --spread-bps 4 --slippage-bps 2 --periods-per-year 8760 --days-per-week 7 \
+  --model claude-haiku-5-5 --budget-usd 1
+python3 "${CLAUDE_SKILL_DIR}/weekly.py" run --dir ~/Documents/trading/crypto1/agent-btc-eur
+python3 "${CLAUDE_SKILL_DIR}/rounds.py" status --base ~/Documents/trading --name crypto1
+python3 "${CLAUDE_SKILL_DIR}/rounds.py" save --base ~/Documents/trading --name crypto1 --reports reports --start-money 500
+```
+
+Per asset: a rules replay (kept overnight) under a neutral name (s1, s2, ... with its data copied under that name;
+the key is in `KEY-do-not-show-helpers.txt`), and a locked agent replay. `save` saves only finished assets.
+
 ## Saved reports (archive.py)
 
 ```bash

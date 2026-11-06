@@ -110,9 +110,43 @@ DAY_INSTRUCTIONS_OVERNIGHT = (
 )
 
 
-def _texts(overnight):
+WEEK_INSTRUCTIONS_CRYPTO = (
+    "You are trading one cryptocurrency to learn whether you can make money after costs. The data is anonymized: "
+    "you are not told which coin or which dates, and prices are shown only as moves in basis points (1 bp = "
+    "0.01%). The market trades around the clock, every day of the week; there is no close and no weekend. A week "
+    "here is seven days. Once a day, at the same hour (shortly before midnight, UTC), you choose what to own until "
+    "the same hour the next day. Your choice is 0 (all cash), 0.5 (half your money in the coin) or 1 (all of it). "
+    "You cannot short, set stops, or trade between decisions. Every change costs the trade-side cost stated below "
+    "on the amount bought or sold, and crypto trading costs are high, so changing often is expensive; keeping what "
+    "you have costs nothing. Cash avoids losses but misses gains, and both count the same: every week you are shown "
+    "what you made and what simply holding the coin made, and the gap is your real result. Volume figures in this "
+    "data are unreliable (many hours show none); do not build rules on them. Before each week you write a forecast "
+    "and rewrite your notebook. The notebook is your only memory from week to week: keep lessons, which choices "
+    "worked and which failed, and the rules you follow; drop what turned out wrong. Every rule must be checkable "
+    "from what you are shown here (the price history, the pattern table, your record). Do not write rules that "
+    "wait for a paper log, a test you cannot see, or a pause with no condition the shown data can meet. Do not copy "
+    "raw numbers into the notebook: the last four weeks are shown to you day by day every week."
+)
+DAY_INSTRUCTIONS_CRYPTO = (
+    "You are trading one anonymized cryptocurrency to learn whether you can make money after costs. The market "
+    "trades around the clock. Choose what to own from the next hour until your next decision at this hour "
+    "tomorrow: 0 (cash), 0.5 (half your money in the coin) or 1 (all of it). Example: if you own nothing and "
+    "answer 1, you buy now with all your money and keep it for the next 24 hours; if you own all of it and answer "
+    "0.5, you sell half. Only the change is traded and charged. You cannot short. Use your notebook and your "
+    "forecast for this week, written by you before the week began."
+)
+MARKETS = ("stock", "crypto")
+
+
+def _texts(overnight, market="stock"):
+    if market == "crypto":
+        return WEEK_INSTRUCTIONS_CRYPTO, DAY_INSTRUCTIONS_CRYPTO
     return ((WEEK_INSTRUCTIONS_OVERNIGHT, DAY_INSTRUCTIONS_OVERNIGHT) if overnight
             else (WEEK_INSTRUCTIONS, DAY_INSTRUCTIONS))
+
+
+def _market(lk):
+    return (lk or {}).get("market", "stock")
 
 
 def _overnight(lk):
@@ -128,12 +162,12 @@ def _fractional(lk):
     return _version(lk) != "1"
 
 
-def context_hash(overnight=False):
+def context_hash(overnight=False, market="stock"):
     """Everything that shapes the agent's answers besides the model and the bars."""
-    week, day = _texts(overnight)
+    week, day = _texts(overnight, market)
     text = "\n".join([WEEK_VERSION, week, day, agent.instructions_hash(), str(agent.DECISION_BAR),
                       str(NOTEBOOK_MAX), str(RECORD_WEEKS), str(DETAIL_WEEKS), str(POSITIONS), str(FORECAST_STEPS),
-                      "overnight" if overnight else "day"])
+                      "overnight" if overnight else "day"] + (["crypto"] if market == "crypto" else []))
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
@@ -228,7 +262,7 @@ def _stat(vals):
                                                                          / len(vals)), len(vals))
 
 
-def pattern_table(blind, weeks, upto_week):
+def pattern_table(blind, weeks, upto_week, market="stock"):
     """Counted, not judged: what followed simple day patterns in the weeks already seen. Lets the model check its
     rules against data without keeping a paper log."""
     rows = _day_rows(blind, weeks, upto_week)
@@ -236,6 +270,20 @@ def pattern_table(blind, weeks, upto_week):
         return ["(no days yet)"]
     ranges = sorted(r["range"] for r in rows)
     wide = 1.5 * ranges[len(ranges) // 2]
+    if market == "crypto":
+        prev = [None] + rows[:-1]
+        conds = [("every day", lambda r, q: True), ("day up", lambda r, q: r["day"] > 0),
+                 ("day down", lambda r, q: r["day"] <= 0),
+                 ("day up more than 300 bps", lambda r, q: r["day"] > 300),
+                 ("day down more than 300 bps", lambda r, q: r["day"] < -300),
+                 ("second up day in a row", lambda r, q: q is not None and r["day"] > 0 and q["day"] > 0),
+                 ("second down day in a row", lambda r, q: q is not None and r["day"] <= 0 and q["day"] <= 0),
+                 ("wide day (range > %.0f bps)" % wide, lambda r, q: r["range"] > wide)]
+        out = ["Pattern (a day is midnight to midnight, UTC) | next day"]
+        for name, test in conds:
+            sel = [r for r, q in zip(rows, prev) if test(r, q)]
+            out.append("%s | %s" % (name, _stat([r["next"] for r in sel])))
+        return out
     conds = [("every day", lambda r: True, True), ("opening gap <= -50 bps", lambda r: r["gap"] <= -50, True),
              ("opening gap >= +50 bps", lambda r: r["gap"] >= 50, True),
              ("first two bars up", lambda r: r["first2"] is not None and r["first2"] > 0, True),
@@ -269,9 +317,9 @@ def _label(pos):
     return {0: "cash", 0.5: "half", 1: "all in"}.get(pos, str(pos))
 
 
-def week_prompt(plan, blind, weeks, week, notebook, results, overnight=False):
+def week_prompt(plan, blind, weeks, week, notebook, results, overnight=False, market="stock"):
     side = agent.per_side_bps(plan["costs"])
-    lines = [_texts(overnight)[0], "", "Cost of one trade side: %.1f bps." % side, "",
+    lines = [_texts(overnight, market)[0], "", "Cost of one trade side: %.1f bps." % side, "",
              "The stock so far, one line per week (week 1 is the first week of the data):"]
     for k in range(1, week):
         a, b = weeks[k - 1]
@@ -287,7 +335,7 @@ def week_prompt(plan, blind, weeks, week, notebook, results, overnight=False):
     for k in range(max(1, week - DETAIL_WEEKS), week):
         lines += ["", "Week %d day by day:" % k] + _week_days(blind, *weeks[k - 1])
     lines += ["", "What followed simple patterns in all the days seen so far (bps; up = share of cases above zero):"]
-    lines += pattern_table(blind, weeks, week)
+    lines += pattern_table(blind, weeks, week, market)
     lines += ["", "Your record so far:"]
     done = [results[k] for k in sorted(results) if k < week]
     if not done:
@@ -332,16 +380,23 @@ def week_prompt(plan, blind, weeks, week, notebook, results, overnight=False):
               'Answer with one JSON object and nothing else: {"expect_return": your net return for the week after '
               'costs, one of -0.01, -0.005, 0, 0.005, 0.01, "expect_market": "up" or "down" (where the stock ends '
               'the week), "plan": "one or two sentences: how you will trade this week and why", "notebook": "..."}']
-    return "\n".join(lines)
+    text = "\n".join(lines)
+    if market == "crypto":
+        head, rest = text.split("\n", 1)
+        text = head + "\n" + rest.replace("the stock", "the coin").replace("The stock", "The coin").replace(
+            "with stock", "with the coin")
+    return text
 
 
-def day_prompt(hist, side, forecast, overnight=False, holding=0):
+def day_prompt(hist, side, forecast, overnight=False, holding=0, market="stock"):
     body = agent.prompt_for(hist, side).split("\n", 1)[1]
     body = body.replace('Answer with {"position": 0 or 1, "reason": "..."} only.',
                         'Answer with {"position": 0, 0.5 or 1, "reason": "..."} only.')
     body = ("You own now: %s (%s)." % (_label(holding), "kept from your last decision" if overnight
                                         else "nothing is kept overnight")) + "\n" + body
-    return "\n".join([_texts(overnight)[1], "", "Your notebook:", forecast["notebook"] or "(empty)", "",
+    if market == "crypto":
+        body = body.replace("the stock", "the coin")
+    return "\n".join([_texts(overnight, market)[1], "", "Your notebook:", forecast["notebook"] or "(empty)", "",
                       "Your forecast for this week: your net return %s, the stock %s. Your plan: %s"
                       % (_pct(forecast["expect_return"]), forecast["expect_market"], forecast["plan"] or "-"),
                       body])
@@ -355,7 +410,7 @@ def _lock(entries):
 
 
 def lock(folder, model, budget, first_week=2, last_week=None, notebook_from=None, seed=1, criteria=None,
-         overnight=False):
+         overnight=False, market="stock"):
     plan, blind, weeks, entries = replay._open(folder)
     if _lock(entries):
         raise ValueError("this folder already has an agent run locked; use a new replay folder for a new run")
@@ -377,13 +432,18 @@ def lock(folder, model, budget, first_week=2, last_week=None, notebook_from=None
     crit.update(criteria or {})
     if sorted(crit) != sorted(judge.DEFAULT_CRITERIA):
         raise ValueError("criteria keys are %s" % sorted(judge.DEFAULT_CRITERIA))
+    if market not in MARKETS:
+        raise ValueError("market must be one of %s" % (MARKETS,))
+    if market == "crypto":
+        overnight = True             # no close: a position always runs to the next decision
     lens = [e - s for s, e in _days(blind, *weeks[0])]
     day_bars = max(set(lens), key=lambda n: (lens.count(n), n))       # the usual day length, from the free week 1
     if overnight and day_bars < 3:
         raise ValueError("days of %d bars are too short to decide before the last bar" % day_bars)
     return T.ledger_append(folder, {
         "kind": "agent_week_lock", "model": model, "budget": float(budget), "first_week": first_week,
-        "last_week": last, "context_hash": context_hash(overnight), "overnight": bool(overnight),
+        "last_week": last, "context_hash": context_hash(overnight, market), "overnight": bool(overnight),
+        "market": market,
         "version": WEEK_VERSION, "day_bars": day_bars,
         "decide_at_bar": (day_bars - 1) if overnight else agent.DECISION_BAR,
         "request": agent.request_settings(),
@@ -432,7 +492,7 @@ def _week_index(weeks, n):
     return out
 
 
-def _day_strategy(asker, side, week_of, forecasts, record, overnight=False, decide_at=None):
+def _day_strategy(asker, side, week_of, forecasts, record, overnight=False, decide_at=None, market="stock"):
     """Asks the model once a day, when the day has `decide_at` bars; the answer fills at the next bar's open.
     Overnight, a day shorter than that has no decision and the position is kept."""
     decide_at = agent.DECISION_BAR if decide_at is None else decide_at
@@ -455,7 +515,7 @@ def _day_strategy(asker, side, week_of, forecasts, record, overnight=False, deci
         if k < decide_at:
             return state["pos"] if overnight else 0
         if k == decide_at:
-            e = asker.ask(day_prompt(hist, side, forecasts[w], overnight, state["pos"]), "day_decision",
+            e = asker.ask(day_prompt(hist, side, forecasts[w], overnight, state["pos"], market), "day_decision",
                           parse_day, {"position": state["pos"] if overnight else 0})
             state["pos"] = e["position"]
             record[i - decide_at + 1] = (i, e)
@@ -536,7 +596,8 @@ def run(folder, client, log=None):
     if _version(lk) != WEEK_VERSION:
         raise ValueError("this run was locked with version %s of the agent; this code is version %s. Its reports "
                          "still work; to continue it, use the code at commit 2624c81" % (_version(lk), WEEK_VERSION))
-    if lk["context_hash"] != context_hash(overnight):
+    market = _market(lk)
+    if lk["context_hash"] != context_hash(overnight, market):
         raise ValueError("the agent's instructions or request settings changed after the lock; use a new folder")
     side = agent.per_side_bps(plan["costs"])
     asker = agent.Asker(os.path.join(folder, "agent"), client, lk["model"], _budget(entries))
@@ -547,7 +608,7 @@ def run(folder, client, log=None):
         if w not in forecasts:
             prev = [forecasts[k] for k in sorted(forecasts) if k < w]
             notebook = prev[-1]["notebook"] if prev else lk["notebook_start"]
-            ans = asker.ask(week_prompt(plan, blind, weeks, w, notebook, results, overnight), "week_forecast",
+            ans = asker.ask(week_prompt(plan, blind, weeks, w, notebook, results, overnight, market), "week_forecast",
                             parse_week,
                             {"expect_return": 0.0, "expect_market": "up", "notebook": notebook})
             forecasts[w] = T.ledger_append(folder, {
@@ -558,11 +619,11 @@ def run(folder, client, log=None):
             record = {}
             head, days = _score_week(plan, blind, weeks, w,
                                      _day_strategy(asker, side, week_of, forecasts, record, overnight,
-                                                   lk["decide_at_bar"]), record, overnight, fractional=True)
+                                                   lk["decide_at_bar"], market), record, overnight, fractional=True)
             a, b = weeks[w - 1]
             stock_move = blind[b - 1]["c"] / blind[a - 1]["c"] - 1.0
             f = forecasts[w]
-            actual = "up" if head["buy_and_hold_return"] > 0 else "down"
+            actual = "up" if stock_move > 0 else "down"         # from the previous close, like holding
             results[w] = T.ledger_append(folder, {
                 "kind": "agent_week_result", "week": w, "strategy_return": head["strategy_return"],
                 "buy_and_hold_return": head["buy_and_hold_return"], "stock_move": stock_move,
@@ -1146,6 +1207,8 @@ def main(argv=None):
     s.add_argument("--last-week", type=int)
     s.add_argument("--notebook-from", help="a notebook.md saved by an earlier run, to start from its lessons")
     s.add_argument("--seed", type=int, default=1)
+    s.add_argument("--market", choices=MARKETS, default="stock",
+                   help="crypto: trades around the clock; one decision a day, positions always kept")
     s.add_argument("--overnight", action="store_true",
                    help="hold or cash until the next decision, so a held position stays open overnight")
     for name in ("run", "status", "memory"):
@@ -1167,9 +1230,9 @@ def main(argv=None):
     try:
         if a.cmd == "lock":
             e = lock(a.dir, a.model, a.budget, a.first_week, a.last_week, a.notebook_from, a.seed,
-                     overnight=a.overnight)
+                     overnight=a.overnight, market=a.market)
             out = {k: e[k] for k in ("model", "budget", "first_week", "last_week", "criteria", "context_hash",
-                                     "overnight")}
+                                     "overnight", "market")}
         elif a.cmd == "run":
             plan, _, _, entries = replay._open(a.dir)
             lk = _lock(entries)

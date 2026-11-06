@@ -456,6 +456,15 @@ class OvernightRules(Env):
         m = report.money(self.dir, d, 500.0)
         self.assertAlmostEqual(m["rules_end"], 500.0 * (1.0 + d["rules_total"]), places=9)
 
+    def test_the_stock_move_counts_from_the_previous_close_like_holding(self):
+        self.start(overnight=True)
+        self.play_week(2, "hold", {})
+        r3 = self.play_week(3, "hold", {})
+        self.assertAlmostEqual(r3["strategy_return"], r3["stock_move"], places=9)
+        self.assertEqual(r3["market_actual"], "up" if r3["stock_move"] > 0 else "down")
+        s = replay.status(self.dir)
+        self.assertIn("stock_total_return", s)
+
     def test_hold_takes_no_parameters(self):
         self.start()
         with self.assertRaises(ValueError):

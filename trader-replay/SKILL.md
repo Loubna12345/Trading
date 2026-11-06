@@ -44,6 +44,9 @@ python3 "${CLAUDE_SKILL_DIR}/report.py" --dir trader/replay/a --out report.html 
 - `start --overnight` makes a replay without the end-of-day sale: positions stay open overnight and from week to
   week. Each week runs its own rule, so a week starts with what the previous week's rule held at its last close;
   the weekend gap counts. The option is written in the plan (older plans have no key and stay day-only).
+- Each result also carries `stock_move`, the stock's move from the previous week's last close to this week's
+  (what holding gets, weekend gap included); `market_actual` and `status`'s `stock_total_return` use it. The older
+  `buy_and_hold_return` starts at the week's first fill and skips that gap.
 - Sealed weeks cannot be read or predicted. `final` runs one rule on all sealed weeks, once per rule, only for
   a rule that was written down for some week, and reports how many different rules were tried.
 

@@ -147,6 +147,14 @@ its instructions said cash costs nothing, it copied raw data into its notebook, 
 of the agent and overnight rules were built from this. Claude has seen every SAP and Siemens week in the chat, so
 its own hand play on those stocks is no longer clean; fresh helpers with no memory play the rules from now on.
 
+## Round 2 (2026-11-06): 5 stocks, both sides overnight, €500 each
+
+Agent v2 (Haiku 5.5, fresh notebook) against rules played by fresh helper agents that saw only neutral folders.
+Agent €2,531.98, rules €2,540.76, holding €2,614.04 (sum of 5). Agent beat holding only on SAP (falling stock);
+helpers held most weeks and lost a little each time they switched to a trend rule. All verdicts NO CLEAR
+DIFFERENCE except Allianz (holding better than the agent). API cost $1.13. A helper found that the replay's weekly
+"stock" figure skipped the weekend gap; fixed with `stock_move` (reports were always right).
+
 ## Unverified or open
 
 - Live downloads from Yahoo and Kraken, Yahoo's real intraday limits, and data delays: untested.
