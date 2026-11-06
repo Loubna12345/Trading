@@ -35,6 +35,33 @@ def kraken_doc(n=5, step=3600, start=T0, errors=None):
     return {"error": errors or [], "result": {"XXBTZEUR": rows, "last": start + (n - 1) * step}}
 
 
+class FetchErrors(unittest.TestCase):
+    def test_http_error_message_carries_the_reason_the_server_gave(self):
+        import urllib.error
+        from unittest import mock
+        body = io.BytesIO(b'{"chart":{"error":{"code":"Unprocessable Entity","description":"range must be within the last 730 days"}}}')
+        err = urllib.error.HTTPError("https://example.test/x?a=1", 422, "Unprocessable Entity", {}, body)
+        with mock.patch.object(history.urllib.request, "urlopen", side_effect=err):
+            with self.assertRaises(ValueError) as cm:
+                history.fetch_json("https://example.test/x?a=1")
+        self.assertIn("422", str(cm.exception))
+        self.assertIn("within the last 730 days", str(cm.exception))
+
+    def test_unreadable_error_body_does_not_hide_the_status(self):
+        import urllib.error
+        from unittest import mock
+
+        class Broken(io.BytesIO):
+            def read(self, *a):
+                raise OSError("boom")
+
+        err = urllib.error.HTTPError("https://example.test/x", 500, "Server Error", {}, Broken(b""))
+        with mock.patch.object(history.urllib.request, "urlopen", side_effect=err):
+            with self.assertRaises(ValueError) as cm:
+                history.fetch_json("https://example.test/x")
+        self.assertIn("500", str(cm.exception))
+
+
 class YahooParse(unittest.TestCase):
     def test_parses_bars_in_utc(self):
         bars, meta, notes = history.parse_yahoo(yahoo_doc(), 5)

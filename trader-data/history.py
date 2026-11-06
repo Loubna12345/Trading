@@ -161,6 +161,13 @@ def fetch_json(url, timeout=20):
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        # servers usually say why in the body; keep a short piece so the reason is not lost
+        try:
+            detail = e.read(400).decode("utf-8", "replace").strip()
+        except (OSError, ValueError):
+            detail = ""
+        raise ValueError("could not fetch %s: %s%s" % (url.split("?")[0], e, " - " + detail if detail else ""))
     except (urllib.error.URLError, OSError, json.JSONDecodeError) as e:
         raise ValueError("could not fetch %s: %s" % (url.split("?")[0], e))
 
