@@ -223,7 +223,7 @@ def main(argv=None):
     args = p.parse_args(argv)
     try:
         if args.cmd == "lock":
-            e = lock(args.dir, args.window, args.rule, replay._params(args.param), args.model, args.budget,
+            e = lock(args.dir, args.window, args.rule, replay._params(args.param), args.model, args.budget_usd,
                      first_week=args.first_week, last_week=args.last_week, seed=args.seed)
             out = {k: e[k] for k in ("window", "first_week", "last_week", "rule_key", "model", "budget",
                                      "criteria", "instructions_hash")}

@@ -264,6 +264,14 @@ class Judge(Env):
         self.assertEqual(len(again.prompts), 0)
         self.assertEqual(r["agent_stats"]["calls"], 0)
 
+    def test_lock_from_the_command_line(self):
+        out = io.StringIO()
+        with mock.patch("sys.stdout", out):
+            code = judge.main(["lock", "--dir", self.dir, "--window", "open", "--rule", "trend", "--param",
+                               "window=3", "--model", MODEL, "--budget-usd", "2"])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out.getvalue())["budget"], 2.0)
+
     def test_every_arm_is_scored_with_the_same_costs(self):
         self.lock(last_week=4)
         res = judge.run(self.dir, Fake())
