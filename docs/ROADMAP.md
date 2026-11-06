@@ -54,3 +54,10 @@ has fixed rules written before any run:
   or stock gains; a government reform for 2027 was reported as planned with no draft yet.
 - No Revolut X paper mode exists; no Revolut or N26 API for stocks, ETFs or FX was found.
 - Day trading on a small account may not beat a world index fund. Step 8 exists to check this.
+
+## Bonus: the replay (trader-replay)
+
+Weekly replay with the stock and dates hidden. For every week after the first, a rule is written to the ledger
+before the week is shown; then the week is revealed and the rule scored with costs. The last third of the weeks
+is sealed; one final test per rule. Each rule tried counts as a trial. Limits are in trader-replay/SKILL.md: the
+source file can be opened by anyone with access, and a model that knows the real period may remember it.

@@ -29,6 +29,7 @@ docs/FINDINGS.md are closed.
 | trader-strategies | Three day-trading rules (trend, opening-range breakout, VWAP reversion), each with a stated reason, run through the backtester (step 3 of docs/ROADMAP.md) |
 | trader-validate | Says PASS, FAIL or INCONCLUSIVE for a rule: doubled costs, late orders, walk-forward, deflated Sharpe, trade count (step 4 of docs/ROADMAP.md) |
 | trader-training | Runs the rules over many stocks of real data under a locked plan, a tamper-evident ledger, confirmation stocks, a chance rate and an untouched holdout (bonus step of docs/ROADMAP.md) |
+| trader-replay | Plays saved data back one week at a time with the stock and dates hidden: a rule is written down before each week is shown, then scored with costs; the last third stays sealed for one final test per rule |
 | trader-copycat | Rebuilds a US fund's 13F portfolio as targets (US-listed stocks only) |
 | trader-analyst, trader-screener, trader-news | Read US company filings (SEC); US-listed companies only |
 

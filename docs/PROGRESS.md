@@ -30,6 +30,7 @@ documented.
 | 3 | `trader-strategies` | done: trend, opening-range breakout, VWAP reversion, long-only, no default parameters |
 | 4 | `trader-validate` | done: cost stress, delay scan, walk-forward, deflated Sharpe on the alpha, trade count, recent stretch, bad-bar check; verdict PASS/FAIL/INCONCLUSIVE |
 | B | `trader-training` | built (see below); only tested on made-up data |
+| B2 | `trader-replay` | built: weekly replay with hidden stock and dates, rule logged before each reveal, sealed last third, one final test per rule; made-up data only so far |
 | 5 | asset profiles | not started: hours, costs, tax and limits per stocks, ETFs, crypto; crypto needs its own tax module |
 | 6 | journal and paper broker | not started: Trading 212 demo adapter behind the risk check and approval |
 | 7 | weekly review loop | not started |
@@ -59,6 +60,25 @@ hourly bars on 5 to 10 stocks first.
   tool learns by a journal and tests, not by changing weights.
 - She wants honest results: most day traders lose money after costs (docs/RESEARCH.md); PASS is only permission to
   try a rule on paper money.
+
+## Agent-versus-rules comparison (agreed 2026-11-06, not yet built beyond the replay)
+
+She wants two arms judged from outside: fixed rules, and an agent called through code with only the allowed
+context (anonymous bars up to the decision, fixed answer format, answers logged before scoring, notes file
+logged). A script judges with a comparison locked in advance (net result after costs vs the rule arm and vs
+buy-and-hold, plus a significance test), not Claude. Plan: replay tool (done), agent runner using the Claude API
+(needs her own API key kept on her computer, never in chat; hard budget cap), judge script. Suggested models:
+Haiku 5.5 for rehearsal, Sonnet 5.5 for the judged run, Fable 5.1 only as a later challenger. Costs quoted from the
+pricing page on 2026-11-06 (USD per million tokens, in/out): Haiku 0.10/0.50, Sonnet 2/10, Opus 4/20, Fable 10/50.
+A replay on past data cannot cleanly test an agent that may remember the period; only data after its knowledge
+ends, and paper trading going forward, count.
+
+## Real-data findings (2026-11-06)
+
+First live download worked on her Mac (SAP.DE, 60-minute bars, 4349 bars). It exposed three things now fixed:
+Python on the Mac lacked certificates (fix: install certifi and set SSL_CERT_FILE), asking for exactly 730 days
+returned HTTP 422 (700 worked), and Yahoo adds a live-price row inside the forming bar (now dropped). She asked
+that Claude not read the downloaded results until the replay tool exists; reading goes through the replay tool.
 
 ## Unverified or open
 
