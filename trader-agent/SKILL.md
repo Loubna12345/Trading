@@ -44,3 +44,26 @@ python3 "${CLAUDE_SKILL_DIR}/judge.py" status --dir trader/replay/a
 - Do a cheap rehearsal (Haiku) in a separate scratch replay folder, not in the one you will judge.
 - A model that remembers how the real period went may recognise it despite the hidden names and dates, so a
   past-data win is practice; the sealed weeks after the model's knowledge and forward paper trading count more.
+
+## Week by week, day by day, with a notebook (weekly.py)
+
+No rule from the library is run: the agent decides itself. Before each week it gets the weeks seen so far, its own
+record (forecasts against results after costs), last week's daily choices with reasons and outcomes, and its
+notebook; it answers with a forecast and a rewritten notebook, logged before the week reaches it. Each day it
+decides hold-to-close or cash. Each week is scored with the same backtester and costs as the hand-played rules.
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/weekly.py" lock --dir trader/replay/agent1 --model claude-haiku-5-5 --budget-usd 2
+python3 "${CLAUDE_SKILL_DIR}/weekly.py" run --dir trader/replay/agent1        # stops at the budget; rerun continues
+python3 "${CLAUDE_SKILL_DIR}/weekly.py" raise-budget --dir trader/replay/agent1 --budget-usd 3   # logged
+python3 "${CLAUDE_SKILL_DIR}/weekly.py" report --dir trader/replay/agent1 --out agent-report.html
+python3 "${CLAUDE_SKILL_DIR}/weekly.py" compare --dir trader/replay/agent1 --rules-dir trader/replay/a --out comparison.html
+```
+
+- Use a fresh replay folder (started from the same data and costs as the rules run, so the weeks match).
+- Nothing is lost: `<folder>/memory/` holds notebook.md (latest), notebook-history.md (every version),
+  journal.md and journal.jsonl (every forecast, plan, daily choice and reason, and whether it was right), rebuilt
+  from the hash-chained ledgers after every week (`weekly.py memory` rebuilds them). A later run can start from
+  a saved notebook with `lock --notebook-from <folder>/memory/notebook.md`.
+- The comparison page judges the agent against the hand-played rules, holding the stock and staying out, with
+  the criteria written in the lock before the run.
