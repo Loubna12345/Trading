@@ -244,6 +244,71 @@ class AnthropicClient:
         return str(s).replace(self._key, "***")
 
 
+# ---------- asking, with a cache, a ledger and a hard budget ----------
+
+class Asker:
+    """Asks the model and logs every answer to a hash-chained ledger in `ledger_folder`, keyed by a hash of the
+    model, the prompt version, the request settings and the exact prompt. A prompt already answered is served from
+    the ledger for free. Before EVERY call the budget is checked against the most that call could cost, so the cap
+    is never passed; all entries with a cost count toward it, whatever their kind."""
+
+    def __init__(self, ledger_folder, client, model, budget):
+        price_for(model)
+        if isinstance(budget, bool) or not isinstance(budget, (int, float)) or budget <= 0:
+            raise ValueError("budget must be a positive number of US dollars")
+        self.folder, self.client, self.model, self.budget = ledger_folder, client, model, budget
+        T.ledger_verify(ledger_folder)
+        self.cache, paid = {}, 0.0
+        for e in T.ledger_read(ledger_folder):
+            if "key" in e:
+                self.cache[e["key"]] = e
+            paid += e.get("cost", 0.0)
+        self.stats = {"calls": 0, "cache_hits": 0, "failures": 0, "spent": 0.0, "ledger_spent": paid}
+
+    def key(self, prompt):
+        return hashlib.sha256((self.model + "\n" + PROMPT_VERSION + "\n" + _settings_text() + "\n" + prompt)
+                              .encode("utf-8")).hexdigest()
+
+    def ask(self, prompt, kind, parse, fallback):
+        """parse(text) -> dict of answer fields, or ValueError. An answer that is still unusable after one retry
+        is logged with `fallback` as its fields and failed=True."""
+        key = self.key(prompt)
+        if key in self.cache:
+            self.stats["cache_hits"] += 1
+            return self.cache[key]
+        worst = worst_case_cost(self.model, prompt)
+        spent, fields, reason, failed, stops = 0.0, dict(fallback), "", True, []
+        for attempt in range(2):
+            if self.stats["ledger_spent"] + spent + worst > self.budget:
+                if spent:
+                    break              # the first attempt is paid for: log it as a failed answer, then stop
+                raise BudgetExceeded("budget of %.4f USD reached (%.4f spent; one more call could cost up to "
+                                     "%.4f); rerun with a higher budget to continue from the saved answers"
+                                     % (self.budget, self.stats["ledger_spent"], worst))
+            res = self.client(prompt)
+            text, usage = res[0], res[1]
+            stops.append(res[2] if len(res) > 2 else None)
+            self.stats["calls"] += 1
+            spent += cost(self.model, usage)
+            try:
+                fields = parse(text)
+                reason = str(fields.pop("reason", ""))
+                failed = False
+                break
+            except ValueError as e:
+                reason = "unusable answer (stop reason %s): %s" % (stops[-1], e)
+        entry = {"kind": kind, "key": key}
+        entry.update(fields)
+        entry.update({"reason": reason[:MAX_REASON], "failed": failed, "model": self.model,
+                      "prompt_version": PROMPT_VERSION, "settings": request_settings(), "stop_reasons": stops,
+                      "cost": spent})
+        e = T.ledger_append(self.folder, entry)
+        self.cache[key] = e
+        self.stats["spent"] += spent
+        self.stats["ledger_spent"] += spent
+        return e
+
+
 # ---------- the rule ----------
 
 def make_agent(folder, client, model, costs, budget, active_from):
@@ -253,57 +318,15 @@ def make_agent(folder, client, model, costs, budget, active_from):
     client       callable prompt -> (text, usage)
     active_from  bar index; no question is asked and no position taken before it
     """
-    price_for(model)
-    if isinstance(budget, bool) or not isinstance(budget, (int, float)) or budget <= 0:
-        raise ValueError("budget must be a positive number of US dollars")
     side = per_side_bps(costs)
-    ledger = os.path.join(folder, "agent")
-    T.ledger_verify(ledger)
-    cache, paid = {}, 0.0
-    for e in T.ledger_read(ledger):
-        if e.get("kind") == "decision":
-            cache[e["key"]] = e
-            paid += e.get("cost", 0.0)
-    stats = {"calls": 0, "cache_hits": 0, "failures": 0, "spent": 0.0, "days": 0, "invested_days": 0,
-             "ledger_spent": paid}
+    asker = Asker(os.path.join(folder, "agent"), client, model, budget)
+    stats = asker.stats
+    stats.update({"days": 0, "invested_days": 0})
     state = {"day": None, "pos": 0}
 
     def decide(prompt):
-        key = hashlib.sha256((model + "\n" + PROMPT_VERSION + "\n" + _settings_text() + "\n" + prompt)
-                             .encode("utf-8")).hexdigest()
-        if key in cache:
-            stats["cache_hits"] += 1
-            return cache[key]
-        worst = worst_case_cost(model, prompt)
-        spent, pos, reason, failed, stops = 0.0, 0, "", True, []
-        for attempt in range(2):
-            # Checked before EVERY call against the most that call could cost, so the cap is never passed.
-            if stats["ledger_spent"] + spent + worst > budget:
-                if spent:
-                    break              # the first attempt is paid for: log it as a failed decision, then stop
-                raise BudgetExceeded("budget of %.4f USD reached (%.4f spent; one more call could cost up to "
-                                     "%.4f); rerun with a higher budget to continue from the saved decisions"
-                                     % (budget, stats["ledger_spent"], worst))
-            res = client(prompt)
-            text, usage = res[0], res[1]
-            stops.append(res[2] if len(res) > 2 else None)
-            stats["calls"] += 1
-            spent += cost(model, usage)
-            try:
-                pos, reason = parse_answer(text)
-                failed = False
-                break
-            except ValueError as e:
-                reason = "unusable answer (stop reason %s): %s" % (stops[-1], e)
-        if failed:
-            pos = 0
-        e = T.ledger_append(ledger, {"kind": "decision", "key": key, "position": pos, "reason": reason[:MAX_REASON],
-                                     "failed": failed, "model": model, "prompt_version": PROMPT_VERSION,
-                                     "settings": request_settings(), "stop_reasons": stops, "cost": spent})
-        cache[key] = e
-        stats["spent"] += spent
-        stats["ledger_spent"] += spent
-        return e
+        return asker.ask(prompt, "decision", lambda text: dict(zip(("position", "reason"), parse_answer(text))),
+                         {"position": 0})
 
     def strategy(hist, position):
         n = len(hist)
