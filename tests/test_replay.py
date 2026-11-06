@@ -68,6 +68,35 @@ class Anonymize(Env):
             self.assertEqual(len({x["t"][:10] for x in blind[a:b]}), WEEKS_DAYS)
 
 
+class SameJudgment(Env):
+    """Hiding the stock must not change how a rule is judged: same trades, same returns."""
+
+    RULES = [("trend", {"window": 3}), ("trend", {"window": 12}), ("orb", {"range_bars": 2}),
+             ("orb", {"range_bars": 8}), ("vwap", {"band_bps": 10, "warmup": 6}),
+             ("vwap", {"band_bps": 50, "warmup": 6})]
+
+    def test_every_rule_scores_the_same_on_hidden_and_original_bars(self):
+        blind, weeks = replay.anonymize(self.bars, WEEKS_DAYS)
+        original = self.bars[:len(blind)]
+        for name, params in self.RULES:
+            fn = replay.strategies.make
+            a = engine.backtest(original, fn(name, **params), COSTS, capital=replay.CAPITAL, flatten_eod=True)
+            b = engine.backtest(blind, fn(name, **params), COSTS, capital=replay.CAPITAL, flatten_eod=True)
+            self.assertEqual(len(a["trades"]), len(b["trades"]), name)
+            for x, y in zip(a["equity"], b["equity"]):
+                self.assertAlmostEqual(x, y, places=6, msg=name)
+            self.assertAlmostEqual(a["costs_paid"], b["costs_paid"], places=6, msg=name)
+
+    def test_a_fixed_fee_costs_the_same_because_the_money_invested_does_not_change(self):
+        costs = dict(COSTS, fixed_fee=1.0)
+        blind, _ = replay.anonymize(self.bars, WEEKS_DAYS)
+        original = self.bars[:len(blind)]
+        fn = replay.strategies.make("trend", window=3)
+        a = engine.backtest(original, fn, costs, capital=replay.CAPITAL, flatten_eod=True)
+        b = engine.backtest(blind, fn, costs, capital=replay.CAPITAL, flatten_eod=True)
+        self.assertAlmostEqual(a["equity"][-1], b["equity"][-1], places=6)
+
+
 class Start(Env):
     def test_start_reports_counts_but_no_dates_or_names(self):
         info = self.start()
