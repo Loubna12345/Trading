@@ -62,6 +62,40 @@ class FetchErrors(unittest.TestCase):
         self.assertIn("500", str(cm.exception))
 
 
+def with_live_tail(doc, offset):
+    """Append a point `offset` seconds after the last bar, the way Yahoo adds a live snapshot."""
+    res = doc["chart"]["result"][0]
+    res["timestamp"].append(res["timestamp"][-1] + offset)
+    q = res["indicators"]["quote"][0]
+    for k in ("open", "high", "low", "close", "volume"):
+        q[k].append(q[k][-1])
+    return doc
+
+
+class YahooLiveTail(unittest.TestCase):
+    def test_a_live_snapshot_inside_the_forming_bar_is_dropped_and_said(self):
+        doc = with_live_tail(yahoo_doc(n=4, step=3600), 1183)
+        bars, meta, notes = history.parse_yahoo(doc, 60)
+        self.assertEqual(len(bars), 4)
+        self.assertEqual(bars[-1]["t"], history.iso(T0 + 3 * 3600))
+        self.assertTrue(any("snapshot" in n for n in notes), notes)
+
+    def test_closeness_earlier_in_the_series_is_still_refused(self):
+        doc = yahoo_doc(n=6, step=300)  # 5-minute bars read as 60-minute
+        with self.assertRaises(ValueError):
+            history.parse_yahoo(doc, 60)
+
+    def test_two_close_points_at_the_end_are_still_refused_when_the_series_is_wrong(self):
+        doc = with_live_tail(yahoo_doc(n=6, step=300), 100)
+        with self.assertRaises(ValueError):
+            history.parse_yahoo(doc, 60)
+
+    def test_a_full_interval_after_the_last_bar_is_a_real_bar(self):
+        doc = with_live_tail(yahoo_doc(n=4, step=3600), 3600)
+        bars, _, _ = history.parse_yahoo(doc, 60)
+        self.assertEqual(len(bars), 5)
+
+
 class YahooParse(unittest.TestCase):
     def test_parses_bars_in_utc(self):
         bars, meta, notes = history.parse_yahoo(yahoo_doc(), 5)

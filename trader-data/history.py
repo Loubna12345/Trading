@@ -97,12 +97,22 @@ def parse_yahoo(doc, interval_min):
                      "v": float(v[i]) if _num(v[i]) else 0.0})
     if not bars:
         raise ValueError("Yahoo gave no usable bars")
+    notes = []
+    # While a market is open Yahoo adds a point stamped with the current time, inside the bar that is still
+    # forming. It is a snapshot, not a bar: drop it, but only when it is the very last row and everything
+    # before it is spaced correctly, so a wrong interval is still caught.
+    if (len(bars) >= 3
+            and epoch_of(bars[-1]["t"]) - epoch_of(bars[-2]["t"]) < interval_min * 60
+            and all(epoch_of(b["t"]) - epoch_of(a["t"]) >= interval_min * 60
+                    for a, b in zip(bars[:-2], bars[1:-1]))):
+        notes.append("Dropped the last row (%s): a live price snapshot inside the forming bar, not a bar."
+                     % bars[-1]["t"])
+        bars = bars[:-1]
     for a, b in zip(bars, bars[1:]):
         if epoch_of(b["t"]) - epoch_of(a["t"]) < interval_min * 60:
             raise ValueError("bars %s and %s are closer than %d minutes: wrong interval?"
                              % (a["t"], b["t"], interval_min))
     engine.check_bars(bars)
-    notes = []
     if empty:
         notes.append("%d empty row(s) dropped (Yahoo had no trade in that bar)." % empty)
     if meta.get("currency") == "GBp":
