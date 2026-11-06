@@ -212,7 +212,8 @@ def main(argv=None):
     s.add_argument("--rule", required=True)
     s.add_argument("--param", action="append")
     s.add_argument("--model", required=True)
-    s.add_argument("--budget-usd", type=float, required=True)
+    s.add_argument("--budget-usd", dest="budget", type=float, required=True,
+                   help="hard cap in US dollars")
     s.add_argument("--first-week", type=int)
     s.add_argument("--last-week", type=int)
     s.add_argument("--seed", type=int, default=1)
@@ -224,7 +225,7 @@ def main(argv=None):
     args = p.parse_args(argv)
     try:
         if args.cmd == "lock":
-            e = lock(args.dir, args.window, args.rule, replay._params(args.param), args.model, args.budget_usd,
+            e = lock(args.dir, args.window, args.rule, replay._params(args.param), args.model, args.budget,
                      first_week=args.first_week, last_week=args.last_week, seed=args.seed)
             out = {k: e[k] for k in ("window", "first_week", "last_week", "rule_key", "model", "budget",
                                      "criteria", "instructions_hash")}
