@@ -224,8 +224,13 @@ def predict(folder, week, strategy, params, expect_return, expect_market, note="
 
 
 def _score(plan, blind, a, b, strategy, params):
+    return _score_fn(plan, blind, a, b, _fn(strategy, params))
+
+
+def _score_fn(plan, blind, a, b, fn):
+    """Score any decision function (hist, position) -> 0/1 on bars a..b the same way a rule is scored."""
     costs = plan["costs"]
-    run = engine.backtest(blind[:b], _fn(strategy, params), costs, capital=CAPITAL, flatten_eod=True)
+    run = engine.backtest(blind[:b], fn, costs, capital=CAPITAL, flatten_eod=True)
     eq = run["equity"]
     start_eq = eq[a - 1] if a > 0 else CAPITAL
     t0 = blind[a]["t"]
