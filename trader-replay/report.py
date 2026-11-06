@@ -143,7 +143,7 @@ def _rescore(plan, blind, weeks, rows, costs):
     total = 1.0
     for w in rows:
         a, b = weeks[w["week"] - 1]
-        total *= 1.0 + replay._score(p, blind, a, b, w["strategy"], w["params"])["strategy_return"]
+        total *= 1.0 + replay._score_fn(p, blind, a, b, replay.week_fn(p, blind, weeks, rows, w))["strategy_return"]
     return total - 1.0
 
 
@@ -159,13 +159,13 @@ def check_start_money(costs, start):
                          "scaled to %s; re-score with that account size instead" % eur(start))
 
 
-def money_path(plan, blind, weeks, rows, start, fn_for_row, flatten_eod=True):
+def money_path(plan, blind, weeks, rows, start, fn_for_row, flatten_eod=None, fractional=False):
     """(end value, costs paid) for `start` money following the weekly results in order. Every cost is a share of
     the trade (no fixed fee), so each week's costs are that week's share of its starting value."""
     value, paid = float(start), 0.0
     for r in rows:
         a, b = weeks[r["week"] - 1]
-        s = replay._score_fn(plan, blind, a, b, fn_for_row(r), flatten_eod=flatten_eod)
+        s = replay._score_fn(plan, blind, a, b, fn_for_row(r), flatten_eod=flatten_eod, fractional=fractional)
         paid += value * s["costs_paid"] / s["start_equity"]
         value *= 1.0 + s["strategy_return"]
     return value, paid
@@ -176,7 +176,7 @@ def money(folder, d, start):
     check_start_money(d["costs"], start)
     plan, blind, weeks, _ = replay._open(folder)
     end, paid = money_path(plan, blind, weeks, d["weeks"], start,
-                           lambda r: replay._fn(r["strategy"], r["params"]))
+                           lambda r: replay.week_fn(plan, blind, weeks, d["weeks"], r))
     return {"start": float(start), "rules_end": end, "rules_costs": paid,
             "stock_end": start * (1.0 + d["stock_total"]),
             "hold_costs": start * 2 * per_side_bps(d["costs"]) / 1e4}

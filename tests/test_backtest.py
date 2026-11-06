@@ -365,3 +365,64 @@ class Csv(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HalfSize(unittest.TestCase):
+    """fractional=True: 0, 0.5 or 1 of the account; only the difference is traded."""
+
+    def series(self, closes):
+        return [bar("2024-01-%02dT10:00:00Z" % (k + 1), c) for k, c in enumerate(closes)]
+
+    def plan(self, wants):
+        return lambda h, p: wants[len(h) - 1]
+
+    def test_half_gets_half_the_move(self):
+        bars = self.series([100, 100, 110, 110])
+        r = engine.backtest(bars, self.plan([0.5, 0.5, 0.5, 0.5]), engine.make_costs(**NO_COST), fractional=True)
+        self.assertAlmostEqual(r["equity"][-1], 10500.0, places=6)
+
+    def test_only_the_difference_is_traded_and_charged(self):
+        costs = engine.make_costs(commission_bps=0, spread_bps=0, slippage_bps=10, fixed_fee=0)
+        bars = self.series([100] * 5)
+        r = engine.backtest(bars, self.plan([0.5, 1, 1, 0.5, 0.5]), costs, fractional=True)
+        sizes = [round(f["qty"] * 100 / 10000, 3) for f in r["fills"]]
+        self.assertEqual([f["side"] for f in r["fills"]], [1, 1, -1])
+        self.assertAlmostEqual(sizes[0], 0.5, places=2)
+        self.assertAlmostEqual(sizes[1], 0.5, places=2)
+        self.assertAlmostEqual(sizes[2], 0.5, places=2)
+        self.assertAlmostEqual(r["costs_paid"], 10000 * 1.5 * 10 / 1e4, delta=0.1)
+
+    def test_full_size_matches_the_normal_mode(self):
+        costs = engine.make_costs(commission_bps=1, spread_bps=2, slippage_bps=1, fixed_fee=0)
+        bars = self.series([100, 101, 99, 102, 103, 100, 98, 101])
+        wants = [1, 1, 0, 1, 1, 0, 0, 1]
+        a = engine.backtest(bars, self.plan(wants), costs)
+        b = engine.backtest(bars, self.plan(wants), costs, fractional=True)
+        for x, y in zip(a["equity"], b["equity"]):
+            self.assertAlmostEqual(x, y, places=6)
+        self.assertEqual(len(a["trades"]), len(b["trades"]))
+
+    def test_a_trade_ends_back_in_cash_with_its_account_return(self):
+        bars = self.series([100, 100, 120, 120, 120])
+        r = engine.backtest(bars, self.plan([0.5, 1, 0, 0, 0]), engine.make_costs(**NO_COST), fractional=True)
+        self.assertEqual(len(r["trades"]), 1)
+        t = r["trades"][0]
+        self.assertAlmostEqual(t["pnl"], r["equity"][-1] - 10000.0, places=6)
+        self.assertAlmostEqual(t["ret"], t["pnl"] / 10000.0, places=12)
+
+    def test_other_values_are_refused(self):
+        bars = self.series([100, 100, 100])
+        with self.assertRaises(ValueError):
+            engine.backtest(bars, self.plan([0.3, 0, 0]), engine.make_costs(**NO_COST), fractional=True)
+        with self.assertRaises(ValueError):
+            engine.backtest(bars, self.plan([0.5, 0, 0]), engine.make_costs(**NO_COST))
+        with self.assertRaises(ValueError):
+            engine.backtest(bars, self.plan([1, 0, 0]), engine.make_costs(**NO_COST), fractional=True,
+                            allow_short=True)
+
+    def test_end_of_day_sells_everything(self):
+        bars = [bar("2024-01-01T10:00:00Z", 100), bar("2024-01-01T11:00:00Z", 100),
+                bar("2024-01-02T10:00:00Z", 120), bar("2024-01-02T11:00:00Z", 120)]
+        r = engine.backtest(bars, lambda h, p: 0.5, engine.make_costs(**NO_COST), fractional=True,
+                            flatten_eod=True)
+        self.assertAlmostEqual(r["equity"][-1], 10000.0, places=6)   # the overnight jump is never held

@@ -39,7 +39,11 @@ python3 "${CLAUDE_SKILL_DIR}/report.py" --dir trader/replay/a --out report.html 
   rewritten. Every prediction also carries two forecasts, required: the net return you expect from the rule that
   week (`--expect-return 0.004` is +0.4%) and where the stock itself ends the week (`--expect-market up|down`).
   `reveal` shows the week and scores the rule: same backtester, costs, one-bar delay and end-of-day
-  flatten as the rest of the project; the result carries buy-and-hold for the same week.
+  flatten as the rest of the project; the result carries buy-and-hold for the same week. `hold` is a rule too
+  (always in the stock).
+- `start --overnight` makes a replay without the end-of-day sale: positions stay open overnight and from week to
+  week. Each week runs its own rule, so a week starts with what the previous week's rule held at its last close;
+  the weekend gap counts. The option is written in the plan (older plans have no key and stay day-only).
 - Sealed weeks cannot be read or predicted. `final` runs one rule on all sealed weeks, once per rule, only for
   a rule that was written down for some week, and reports how many different rules were tried.
 

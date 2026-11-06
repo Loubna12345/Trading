@@ -126,6 +126,27 @@ logged in the ledger, plan untouched. `play_week.py` now finds the replay next t
   - Not changed: the `hold` arm's weekly returns skip the gap between weeks while its total includes it (not
     used in the verdict); no refusal fallback to another model (the arm must be the locked model).
 
+## Runs on 2026-11-06 (Haiku 5.5, €500 per run, costs 0 / 2 / 1 bps, weeks 2-64)
+
+Reports in `~/Documents/trading/reports/` (never overwritten; `index.html` lists them).
+
+| Stock | Who | Mode | End | Saved as |
+| --- | --- | --- | --- | --- |
+| SAP | rules by hand | day-only | €469.60 | rules-run-01 |
+| SAP | agent v1 | day-only | €483.95 | agent-run-01 |
+| SAP | agent v1 | overnight | €450.92 | agent-run-04 |
+| SAP | just holding | | about €343.50 | |
+| Siemens | rules by hand | day-only | €491.58 | rules-run-02 |
+| Siemens | agent v1 | day-only | €499.10 | agent-run-03 (02 is a partial save, marked) |
+| Siemens | agent v1 | overnight | €528.15 | agent-run-05 |
+| Siemens | just holding | | about €566.50 | |
+
+Every comparison: NO CLEAR DIFFERENCE. Reading the runs: the agent froze into cash ("paused until paper wins"),
+its instructions said cash costs nothing, it copied raw data into its notebook, it did not use overnight holding
+(one-night trades on SAP, 5 trading days in 63 weeks on Siemens), and forecast exactly zero in most weeks. Version 2
+of the agent and overnight rules were built from this. Claude has seen every SAP and Siemens week in the chat, so
+its own hand play on those stocks is no longer clean; fresh helpers with no memory play the rules from now on.
+
 ## Unverified or open
 
 - Live downloads from Yahoo and Kraken, Yahoo's real intraday limits, and data delays: untested.
@@ -144,8 +165,8 @@ logged in the ledger, plan untouched. `play_week.py` now finds the replay next t
 
 1. Her side: `git pull` in `~/Documents/trading/repo`; create an Anthropic API key with a monthly limit and set
    `ANTHROPIC_API_KEY` in her own Terminal (never in chat).
-2. More data: download SIE.DE, ALV.DE, BAS.DE, DTE.DE
-   (`python3 trader-data/history.py fetch yahoo SYM --interval 60 --days 700 --store ../history`).
+2. Round 2: SAP, SIE, ALV, BAS, DTE with agent v2 overnight and overnight rules played by fresh helpers;
+   then a Sonnet run if she decides on it.
 3. Confirm Trading 212 spread and slippage so the placeholder costs (0 / 2 / 1 bps) can be replaced.
 4. Haiku rehearsal of the agent comparison in a scratch replay folder, then a locked Sonnet run: open window first,
    sealed window once, on a stock Claude has not seen.

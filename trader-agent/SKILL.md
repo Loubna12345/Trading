@@ -67,3 +67,25 @@ python3 "${CLAUDE_SKILL_DIR}/weekly.py" compare --dir trader/replay/agent1 --rul
   a saved notebook with `lock --notebook-from <folder>/memory/notebook.md`.
 - The comparison page judges the agent against the hand-played rules, holding the stock and staying out, with
   the criteria written in the lock before the run.
+- `lock --overnight`: the agent decides near the close (before the day's last bar) what to own until its next
+  decision, so a held position stays open overnight and over weekends; costs only when the position changes.
+- Version 2 (WEEK_VERSION, written in the lock), from reading runs 1 to 5: positions 0, 0.5 or 1; every week the
+  model sees what simply holding made and what its choices gained or missed; a pattern table (what followed gaps,
+  first-two-bar moves and up or down days in the weeks already seen); the last four weeks day by day; return
+  forecasts in steps of 0.5% scored against always-zero; instructions that cash misses gains and that every
+  notebook rule must be checkable from the data shown. Version 1 runs still build reports but cannot be continued
+  with this code (use commit 2624c81).
+- Network errors, timeouts, 429 and 5xx are retried after 10, 30 and 90 seconds.
+
+## Saved reports (archive.py)
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/archive.py" rules   --dir RULES --reports reports --start-money 500 --round "round 2"
+python3 "${CLAUDE_SKILL_DIR}/archive.py" agent   --dir AGENT --reports reports --start-money 500 --round "round 2"
+python3 "${CLAUDE_SKILL_DIR}/archive.py" compare --dir AGENT --rules-dir RULES --reports reports --start-money 500 --round "round 2"
+python3 "${CLAUDE_SKILL_DIR}/archive.py" note    --reports reports --file agent-run-02.html --text "..."
+```
+
+Reports are numbered per kind (rules-run-NN, agent-run-NN, comparison-NN), created only if no such file exists,
+and summarized in a hash-chained `reports/ledger.jsonl`; `index.html` lists every run and adds up each round. An
+unfinished agent run is refused unless `--partial` is given.

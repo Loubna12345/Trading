@@ -112,15 +112,25 @@ class History:
         return (self._f[j] for j in range(self._n))
 
 
-def _signal(value, allow_short):
-    ok = (-1, 0, 1) if allow_short else (0, 1)
+HALF_SIZES = (0, 0.5, 1)
+
+
+def _signal(value, allow_short, fractional=False):
+    ok = HALF_SIZES if fractional else ((-1, 0, 1) if allow_short else (0, 1))
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value not in ok:
         raise ValueError("strategy must return one of %s, got %r" % (list(ok), value))
-    return int(value)
+    return float(value) if fractional else int(value)
 
 
 def backtest(bars, strategy, costs, capital=10000.0, delay=1, allow_short=False, flatten_eod=False,
-             size_fraction=1.0):
+             size_fraction=1.0, fractional=False):
+    """fractional=True: the strategy returns 0, 0.5 or 1, the share of the account to hold in the asset (long
+    only). A change buys or sells only the difference, at the next bar's open, with the usual costs on the amount
+    traded. A trade runs from the first buy out of cash to the sale back to cash; its pnl is the change in the
+    account over that time and its ret is that pnl as a share of the account when the trade began."""
+    if fractional and (allow_short or size_fraction != 1.0):
+        raise ValueError("fractional positions are long only and size themselves; leave allow_short and "
+                         "size_fraction at their defaults")
     if costs is None:
         raise ValueError("a cost model is required: use make_costs(...)")
     if not isinstance(delay, int) or delay < 1:
@@ -185,23 +195,73 @@ def backtest(bars, strategy, costs, capital=10000.0, delay=1, allow_short=False,
         open_trade = {"entry_t": bars[i]["t"], "entry_i": i, "entry_price": rec["price"],
                       "qty": rec["qty"] * want, "entry_fee": rec["cost"]}
 
+    target = 0.0          # fractional mode: the share of the account last asked for
+
+    def frac_close(i, ref_price, label):
+        nonlocal open_trade
+        if abs(qty) < 1e-12:
+            return
+        rec = do_fill(i, ref_price, -1, qty, label)
+        entry = open_trade
+        pnl = cash - entry["cash_before"]
+        trades.append({"entry_t": entry["entry_t"], "exit_t": bars[i]["t"], "side": 1, "qty": entry["qty"],
+                       "entry_price": entry["entry_price"], "exit_price": rec["price"], "pnl": pnl,
+                       "ret": pnl / entry["cash_before"], "bars_held": i - entry["entry_i"]})
+        open_trade = None
+
+    def frac_rebalance(i, ref_price, want):
+        nonlocal open_trade
+        if want == 0:
+            frac_close(i, ref_price, "exit")
+            return
+        eq = cash + qty * ref_price
+        if want * eq > qty * ref_price:
+            px = fill_price(ref_price, 1, costs)
+            denom = px * (1.0 + costs["commission_bps"] / 1e4)
+            gap = (want * eq - qty * ref_price) / denom
+            room = (cash - costs["fixed_fee"]) / denom
+            units = min(gap, room)
+            if units <= 1e-12:
+                return
+            before = cash
+            rec = do_fill(i, ref_price, 1, units, "entry" if open_trade is None else "add")
+            if open_trade is None:
+                open_trade = {"entry_t": bars[i]["t"], "entry_i": i, "entry_price": rec["price"], "qty": rec["qty"],
+                              "entry_fee": rec["cost"], "cash_before": before}
+        else:
+            units = qty - want * eq / ref_price
+            if units > 1e-12:
+                do_fill(i, ref_price, -1, units, "reduce")
+
     for i in range(n):
         if i in scheduled:
             want = scheduled.pop(i)
-            current = 0 if abs(qty) < 1e-12 else (1 if qty > 0 else -1)
-            if want != current:
-                close_position(i, bars[i]["o"], "exit")
-                if want != 0:
-                    open_position(i, bars[i]["o"], want)
+            if fractional:
+                if want != target:
+                    frac_rebalance(i, bars[i]["o"], want)
+                    target = want
+            else:
+                current = 0 if abs(qty) < 1e-12 else (1 if qty > 0 else -1)
+                if want != current:
+                    close_position(i, bars[i]["o"], "exit")
+                    if want != 0:
+                        open_position(i, bars[i]["o"], want)
         last_of_day = i == n - 1 or day[i + 1] != day[i]
         if flatten_eod and last_of_day:
-            close_position(i, bars[i]["c"], "end of day")
+            if fractional:
+                frac_close(i, bars[i]["c"], "end of day")
+                target = 0.0
+            else:
+                close_position(i, bars[i]["c"], "end of day")
             scheduled.clear()
         equity.append(cash + qty * bars[i]["c"])
         if flatten_eod and last_of_day:
             continue
-        current = 0 if abs(qty) < 1e-12 else (1 if qty > 0 else -1)
-        sig = _signal(strategy(History(frozen, i + 1), current), allow_short)
+        if fractional:
+            current = target
+        else:
+            current = 0 if abs(qty) < 1e-12 else (1 if qty > 0 else -1)
+        sig = _signal(strategy(History(frozen, i + 1), current), allow_short, fractional)
         if i + delay < n:
             scheduled[i + delay] = sig
 

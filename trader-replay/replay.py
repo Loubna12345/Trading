@@ -21,7 +21,7 @@ rest of the market can still be recognised. Treat a replay result as practice, n
 Commands:
   start   SOURCE.csv --dir D --commission-bps B --spread-bps S --slippage-bps L --fixed-fee F --periods-per-year N
   show    --dir D --week K
-  predict --dir D --week K --strategy NAME --param key=value ... --expect-return R --expect-market up|down\n          [--note TEXT]     (NAME may be `none`)
+  predict --dir D --week K --strategy NAME --param key=value ... --expect-return R --expect-market up|down\n          [--note TEXT]     (NAME may be `none` or `hold`)
   reveal  --dir D --week K
   final   --dir D --strategy NAME --param key=value ...
   status  --dir D
@@ -110,7 +110,7 @@ def _plan_hash(plan):
     return hashlib.sha256(T._canon(plan).encode("utf-8")).hexdigest()
 
 
-def start(source, folder, costs, periods_per_year, days_per_week=5, holdout=0.34):
+def start(source, folder, costs, periods_per_year, days_per_week=5, holdout=0.34, overnight=False):
     costs = _check_costs(costs)
     if not isinstance(periods_per_year, (int, float)) or isinstance(periods_per_year, bool) or periods_per_year <= 0:
         raise ValueError("periods_per_year must be a positive number")
@@ -128,6 +128,8 @@ def start(source, folder, costs, periods_per_year, days_per_week=5, holdout=0.34
     plan = {"source": os.path.abspath(source), "source_sha256": _sha256_file(source), "costs": costs,
             "periods_per_year": periods_per_year, "days_per_week": days_per_week, "holdout": holdout,
             "weeks": len(weeks), "sealed_weeks": sealed}
+    if overnight:
+        plan["overnight"] = True     # only written when set, so older plans keep their hash
     os.makedirs(folder, exist_ok=True)
     with open(os.path.join(folder, PLAN), "w", encoding="utf-8") as fh:
         json.dump(plan, fh, sort_keys=True, indent=1)
@@ -193,11 +195,39 @@ def _state(plan, entries):
 
 
 def _fn(name, params):
-    if name == "none":
+    if name in ("none", "hold"):
         if params:
-            raise ValueError("`none` takes no parameters")
-        return lambda hist, pos: 0
+            raise ValueError("`%s` takes no parameters" % name)
+        return (lambda hist, pos: 0) if name == "none" else (lambda hist, pos: 1)
     return strategies.make(name, **params)
+
+
+def overnight(plan):
+    """True when this replay lets positions stay open overnight and from week to week (start --overnight)."""
+    return bool(plan.get("overnight"))
+
+
+def _path_fn(blind, weeks, rule_by_week):
+    """Overnight replays: every week runs its own rule, so the position a week starts with is the one the
+    previous week's rule held at its last close. Weeks without a rule are in cash."""
+    week_of = [0] * len(blind)
+    for w, (a, b) in enumerate(weeks, 1):
+        for i in range(a, b):
+            week_of[i] = w
+    fns = {w: _fn(s, p) for w, (s, p) in rule_by_week.items()}
+
+    def fn(hist, pos):
+        f = fns.get(week_of[len(hist) - 1])
+        return f(hist, pos) if f else 0
+    return fn
+
+
+def week_fn(plan, blind, weeks, rows, row):
+    """The decision function that scores `row` (a played week with strategy and params). `rows` are all played
+    weeks; in an overnight replay the earlier ones decide what the week starts with."""
+    if not overnight(plan):
+        return _fn(row["strategy"], row["params"])
+    return _path_fn(blind, weeks, {r["week"]: (r["strategy"], r["params"]) for r in rows if r["week"] <= row["week"]})
 
 
 def _rule_key(name, params):
@@ -258,12 +288,14 @@ def _score(plan, blind, a, b, strategy, params):
     return _score_fn(plan, blind, a, b, _fn(strategy, params))
 
 
-def _score_fn(plan, blind, a, b, fn, flatten_eod=True):
+def _score_fn(plan, blind, a, b, fn, flatten_eod=None, fractional=False):
     """Score any decision function (hist, position) -> 0/1 on bars a..b the same way a rule is scored. With
     flatten_eod=False a position may be held overnight and into the week (it is then part of the starting value
     eq[a-1]); a position still open at bar b-1 is marked at its close, its sell cost not yet charged."""
     costs = plan["costs"]
-    run = engine.backtest(blind[:b], fn, costs, capital=CAPITAL, flatten_eod=flatten_eod)
+    if flatten_eod is None:
+        flatten_eod = not overnight(plan)
+    run = engine.backtest(blind[:b], fn, costs, capital=CAPITAL, flatten_eod=flatten_eod, fractional=fractional)
     eq = run["equity"]
     start_eq = eq[a - 1] if a > 0 else CAPITAL
     t0 = blind[a]["t"]
@@ -288,7 +320,7 @@ def reveal(folder, week):
     if not pred:
         raise ValueError("write the rule for week %d first (predict); the ledger must hold it before the reveal" % week)
     a, b = weeks[week - 1]
-    res = _score(plan, blind, a, b, pred[0]["strategy"], pred[0]["params"])
+    res = _score_fn(plan, blind, a, b, week_fn(plan, blind, weeks, st["predictions"], pred[0]))
     actual_market = "up" if res["buy_and_hold_return"] > 0 else "down"
     res.update({"week": week, "kind": "result", "rule": pred[0]["rule"],
                 "expected_return": pred[0]["expect_return"],
@@ -384,6 +416,8 @@ def main(argv=None):
     s.add_argument("--periods-per-year", type=float, required=True)
     s.add_argument("--days-per-week", type=int, default=5)
     s.add_argument("--holdout", type=float, default=0.34)
+    s.add_argument("--overnight", action="store_true",
+                   help="positions may stay open overnight and from week to week (no sale at every close)")
     for name in ("show", "reveal"):
         x = sub.add_parser(name)
         x.add_argument("--dir", required=True)
@@ -412,7 +446,7 @@ def main(argv=None):
         if a.cmd == "start":
             costs = {"commission_bps": a.commission_bps, "spread_bps": a.spread_bps,
                      "slippage_bps": a.slippage_bps, "fixed_fee": a.fixed_fee}
-            out = start(a.source, a.dir, costs, a.periods_per_year, a.days_per_week, a.holdout)
+            out = start(a.source, a.dir, costs, a.periods_per_year, a.days_per_week, a.holdout, a.overnight)
             print(json.dumps(out, indent=2))
         elif a.cmd == "show":
             print(_csv(show(a.dir, a.week)))

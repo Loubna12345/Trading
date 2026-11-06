@@ -338,8 +338,8 @@ class Overnight(Base):
         fake, rows = self.run_overnight()
         days = [p for kind, _, p in fake.calls if kind == "day"]
         self.assertTrue(all(p.startswith(weekly.DAY_INSTRUCTIONS_OVERNIGHT) for p in days))
-        self.assertIn("You are in cash now.", days[0])
-        self.assertIn("You hold the stock now", days[1])
+        self.assertIn("You own now: cash", days[0])
+        self.assertIn("You own now: all in (kept from your last decision)", days[1])
         weeks = [p for kind, _, p in fake.calls if kind == "week"]
         self.assertTrue(all(p.startswith(weekly.WEEK_INSTRUCTIONS_OVERNIGHT) for p in weeks))
         self.assertIn("to your next decision", weeks[-1])
@@ -374,6 +374,102 @@ class Overnight(Base):
             self.assertEqual(weekly.main(["lock", "--dir", self.dir, "--model", MODEL, "--budget-usd", "1",
                                           "--last-week", "4", "--overnight"]), 0)
         self.assertIn('"overnight": true', out.getvalue())
+
+
+class Version2(Base):
+    def test_forecasts_snap_to_the_steps(self):
+        for given, step in ((0.0007, 0.0), (0.004, 0.005), (-0.02, -0.01), (0.0025, 0.0), (0.008, 0.01)):
+            got = weekly.parse_week(json.dumps({"expect_return": given, "expect_market": "up", "notebook": ""}))
+            self.assertEqual(got["expect_return"], step, given)
+
+    def test_half_is_a_valid_answer_and_other_sizes_are_not(self):
+        self.assertEqual(weekly.parse_day('{"position": 0.5, "reason": "x"}')["position"], 0.5)
+        self.assertEqual(weekly.parse_day('{"position": 1, "reason": "x"}')["position"], 1)
+        for bad in ('{"position": 0.3}', '{"position": true}', '{"position": "1"}'):
+            with self.assertRaises(ValueError):
+                weekly.parse_day(bad)
+
+    def test_the_lock_records_the_version_and_when_to_decide(self):
+        e = self.lock(overnight=True)
+        self.assertEqual(e["version"], weekly.WEEK_VERSION)
+        self.assertEqual(e["decide_at_bar"], e["day_bars"] - 1)
+        e2 = weekly.lock(folder=self.start_other(), model=MODEL, budget=1.0, first_week=2, last_week=3)
+        self.assertEqual(e2["decide_at_bar"], weekly.agent.DECISION_BAR)
+
+    def start_other(self):
+        other = os.path.join(self.root, "other")
+        replay.start(source=self.csv, folder=other, costs=COSTS, periods_per_year=self.PPY, days_per_week=WEEKS_DAYS,
+                     holdout=0.34)
+        return other
+
+    def test_overnight_decides_before_the_last_bar_of_the_day(self):
+        e = self.lock(overnight=True)
+        weekly.run(self.dir, Fake())
+        plan, blind, weeks, _ = replay._open(self.dir)
+        for r in self.entries("agent_week_result"):
+            for d in r["days"]:
+                if d.get("position") is None:
+                    continue
+                i = d["decided_at"]
+                day = blind[i]["t"][:10]
+                k = sum(1 for j in range(max(0, i - 50), i + 1) if blind[j]["t"][:10] == day)
+                self.assertEqual(k, e["decide_at_bar"])
+
+    def test_half_size_runs_are_scored_and_replayed_the_same(self):
+        self.lock(overnight=True)
+        weekly.run(self.dir, Fake(day=lambda p: 0.5 if len(p) % 3 else 1))
+        rows = sorted(self.entries("agent_week_result"), key=lambda e: e["week"])
+        self.assertTrue(any(d.get("position") == 0.5 for r in rows for d in r["days"]))
+        plan, blind, weeks, _ = replay._open(self.dir)
+        total = 1.0
+        for r in rows:
+            total *= 1.0 + r["strategy_return"]
+        self.assertAlmostEqual(weekly._rescore_agent(plan, blind, weeks, rows, plan["costs"], True, True),
+                               total - 1.0, places=12)
+        d = weekly.build(self.dir)
+        self.assertAlmostEqual(weekly.agent_money(self.dir, d, 500.0)["agent_end"], 500.0 * total, places=9)
+
+    def test_half_size_in_a_day_only_run(self):
+        self.lock()
+        weekly.run(self.dir, Fake(day=lambda p: 0.5))
+        rows = self.entries("agent_week_result")
+        plan, blind, weeks, _ = replay._open(self.dir)
+        total = 1.0
+        for r in sorted(rows, key=lambda e: e["week"]):
+            total *= 1.0 + r["strategy_return"]
+        self.assertAlmostEqual(weekly._rescore_agent(plan, blind, weeks, rows, plan["costs"], False, True),
+                               total - 1.0, places=12)
+
+    def test_the_weekly_prompt_shows_missed_gains_patterns_and_four_weeks(self):
+        self.lock(overnight=True, last_week=7)
+        fake = Fake(day=lambda p: 0)
+        weekly.run(self.dir, fake)
+        last = [p for kind, w, p in fake.calls if kind == "week"][-1]
+        self.assertIn("simply holding the stock", last)
+        self.assertIn("so your choices", last)
+        self.assertIn("close to next open (overnight)", last)
+        self.assertIn("opening gap <= -50 bps", last)
+        for k in (3, 4, 5, 6):
+            self.assertIn("Week %d day by day:" % k, last)
+        self.assertNotIn("Week 2 day by day:", last)
+        self.assertIn("checkable from what you are shown", last)
+        self.assertNotIn("Staying in cash is a valid choice and costs nothing", weekly.WEEK_INSTRUCTIONS)
+
+    def test_the_pattern_table_counts_only_weeks_already_seen(self):
+        plan, blind, weeks, _ = replay._open(self.dir)
+        early = weekly.pattern_table(blind, weeks, 3)
+        n = int(re.search(r"n=(\d+)", early[1]).group(1))
+        self.assertEqual(n, 2 * WEEKS_DAYS)
+
+    def test_a_run_locked_with_an_older_version_is_refused(self):
+        self.lock()
+        old = weekly.WEEK_VERSION
+        try:
+            weekly.WEEK_VERSION = "3"
+            with self.assertRaisesRegex(ValueError, "version 2"):
+                weekly.run(self.dir, Fake())
+        finally:
+            weekly.WEEK_VERSION = old
 
 
 if __name__ == "__main__":

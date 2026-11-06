@@ -411,5 +411,56 @@ class Cli(Env):
         self.assertNotEqual(code, 0)
 
 
+class OvernightRules(Env):
+    def test_the_option_is_in_the_plan_and_old_plans_have_no_key(self):
+        self.start(overnight=True)
+        plan, _, _, _ = replay._open(self.dir)
+        self.assertTrue(replay.overnight(plan))
+        other = os.path.join(self.root, "day")
+        self.start(folder=other)
+        with open(os.path.join(other, replay.PLAN)) as fh:
+            self.assertNotIn("overnight", json.load(fh))
+
+    def test_hold_keeps_the_stock_through_nights_and_weekends(self):
+        self.start(overnight=True)
+        r2 = self.play_week(2, "hold", {})
+        r3 = self.play_week(3, "hold", {})
+        plan, blind, weeks, _ = replay._open(self.dir)
+        a, b = weeks[2]
+        self.assertEqual(r3["costs_paid"], 0.0)                       # kept from week 2, nothing traded
+        self.assertAlmostEqual(r3["strategy_return"], blind[b - 1]["c"] / blind[a - 1]["c"] - 1.0, places=9)
+        self.assertGreater(r2["costs_paid"], 0.0)
+
+    def test_a_week_starts_with_what_the_last_weeks_rule_held(self):
+        self.start(overnight=True)
+        self.play_week(2, "hold", {})
+        r3 = self.play_week(3, "none", {})
+        self.assertGreater(r3["costs_paid"], 0.0)                     # it sells what week 2 left open
+        self.assertEqual(r3["trades"], 1)
+
+    def test_day_only_replays_are_unchanged_by_hold(self):
+        self.start()
+        r = self.play_week(2, "hold", {})
+        self.assertEqual(r["trades"], WEEKS_DAYS)                     # bought and sold every day
+
+    def test_report_money_and_rescoring_follow_the_overnight_path(self):
+        report = load("trader-replay", "report")
+        self.start(overnight=True)
+        for w, (name, params) in zip((2, 3, 4, 5), (("hold", {}), ("trend", {"window": 3}), ("none", {}),
+                                                    ("hold", {}))):
+            self.play_week(w, name, params)
+        d = report.build(self.dir)
+        plan, blind, weeks, _ = replay._open(self.dir)
+        self.assertAlmostEqual(report._rescore(plan, blind, weeks, d["weeks"], plan["costs"]), d["rules_total"],
+                               places=12)
+        m = report.money(self.dir, d, 500.0)
+        self.assertAlmostEqual(m["rules_end"], 500.0 * (1.0 + d["rules_total"]), places=9)
+
+    def test_hold_takes_no_parameters(self):
+        self.start()
+        with self.assertRaises(ValueError):
+            replay.predict(self.dir, 2, "hold", {"x": 1}, 0.0, "up")
+
+
 if __name__ == "__main__":
     unittest.main()

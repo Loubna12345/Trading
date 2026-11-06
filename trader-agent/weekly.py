@@ -62,48 +62,51 @@ report = _load(os.path.join(ROOT, "trader-replay", "report.py"), "trader_report_
 engine = replay.engine
 T = replay.T
 
-WEEK_VERSION = "1"
+WEEK_VERSION = "2"          # 2: missed gains shown, pattern table, last 4 weeks, half size, stepped forecasts
 NOTEBOOK_MAX = 3000
 PLAN_MAX = 600
 RECORD_WEEKS = 12          # past weeks shown one by one in the weekly prompt (totals cover all of them)
+DETAIL_WEEKS = 4           # past weeks shown day by day, so the notebook can keep lessons instead of numbers
+POSITIONS = (0, 0.5, 1)
+FORECAST_STEPS = (-0.01, -0.005, 0.0, 0.005, 0.01)
 
-WEEK_INSTRUCTIONS = (
-    "You are trading one stock, day by day, to learn whether you can make money after costs. The data is "
-    "anonymized: you are not told which stock or which dates, and prices are shown only as moves in basis points "
-    "(1 bp = 0.01%). Each trading day, after the day's first two hourly bars, you will decide whether to hold the "
-    "stock until that day's close or stay in cash. You cannot short. Every trade side costs the amount stated below "
-    "and every position is closed at the close. Before each week you write a forecast and rewrite your notebook. "
-    "The notebook is your only memory from week to week: keep in it what you learned, which kinds of choices worked "
-    "and which failed, and the rules you want to follow; drop what turned out wrong. Staying in cash is a valid "
-    "choice and costs nothing."
+_CORE = (
+    "You are trading one stock to learn whether you can make money after costs. The data is anonymized: you are "
+    "not told which stock or which dates, and prices are shown only as moves in basis points (1 bp = 0.01%). "
+    "{when} Your choice is 0 (all cash), 0.5 (half your money in the stock) or 1 (all of it). You cannot short, "
+    "set stops, or trade between decisions. Every change costs the trade-side cost stated below on the amount "
+    "bought or sold; keeping what you have costs nothing. Cash avoids losses but misses gains, and both count the "
+    "same: every week you are shown what you made and what simply holding the stock made, and the gap is your "
+    "real result. Before each week you write a forecast and rewrite your notebook. The notebook is your only "
+    "memory from week to week: keep lessons, which choices worked and which failed, and the rules you follow; "
+    "drop what turned out wrong. Every rule must be checkable from what you are shown here (the stock history, the "
+    "pattern table, your record). Do not write rules that wait for a paper log, a test you cannot see, or a pause "
+    "with no condition the shown data can meet. Do not copy raw numbers into the notebook: the last four weeks "
+    "are shown to you day by day every week."
 )
+_WHEN_DAY = ("Once each trading day, after the day's first two hourly bars, you choose what to own until that "
+             "day's close; everything is sold at the close.")
+_WHEN_NIGHT = ("Once each trading day, near the close (before the day's last hourly bar), you choose what to own "
+               "until your next decision on the following trading day. Owning the stock means keeping it "
+               "overnight (and over the weekend after the last day of a week), so you also get the move from the "
+               "close to the next open.")
+
+WEEK_INSTRUCTIONS = _CORE.format(when=_WHEN_DAY)
+WEEK_INSTRUCTIONS_OVERNIGHT = _CORE.format(when=_WHEN_NIGHT)
 
 DAY_INSTRUCTIONS = (
-    "You are trading one anonymized stock, day by day, to learn whether you can make money after costs. Decide for "
-    "today only: hold the stock from the next bar's open until today's close (1), or stay in cash (0). You cannot "
-    "short. Use your notebook and your forecast for this week, written by you before the week began."
+    "You are trading one anonymized stock to learn whether you can make money after costs. Choose what to own "
+    "from the next bar's open until today's close: 0 (cash), 0.5 (half your money in the stock) or 1 (all of "
+    "it). Everything is sold at the close. You cannot short. Use your notebook and your forecast for this week, "
+    "written by you before the week began."
 )
-
-
-WEEK_INSTRUCTIONS_OVERNIGHT = (
-    "You are trading one stock, day by day, to learn whether you can make money after costs. The data is "
-    "anonymized: you are not told which stock or which dates, and prices are shown only as moves in basis points "
-    "(1 bp = 0.01%). Each trading day, after the day's first two hourly bars, you decide whether to hold the stock "
-    "or be in cash until your next decision, which comes the next trading day after its first two bars. Holding "
-    "means you keep the stock overnight (and over the weekend after the last day of a week), so you get the moves "
-    "between one day's close and the next day's open as well. You cannot short. Buying and selling each cost the "
-    "amount stated below; keeping what you already have costs nothing. Before each week you write a forecast and "
-    "rewrite your notebook. The notebook is your only memory from week to week: keep in it what you learned, which "
-    "kinds of choices worked and which failed, and the rules you want to follow; drop what turned out wrong. Being "
-    "in cash is a valid choice."
-)
-
 DAY_INSTRUCTIONS_OVERNIGHT = (
-    "You are trading one anonymized stock, day by day, to learn whether you can make money after costs. Decide what "
-    "to have until your next decision (the next trading day, after its first two bars): hold the stock (1), kept "
-    "overnight, or be in cash (0). Buying or selling costs one trade side each; keeping what you have costs "
-    "nothing. You cannot short. Use your notebook and your forecast for this week, written by you before the week "
-    "began."
+    "You are trading one anonymized stock to learn whether you can make money after costs. Choose what to own "
+    "from the next bar's open until your next decision, near tomorrow's close: 0 (cash), 0.5 (half your money in "
+    "the stock) or 1 (all of it). Example: if you own nothing and answer 1, you buy now with all your money and "
+    "keep the stock tonight and all of tomorrow until you decide again; if you own all of it and answer 0.5, you "
+    "sell half. Only the change is traded and charged. You cannot short. Use your notebook and your forecast for "
+    "this week, written by you before the week began."
 )
 
 
@@ -116,12 +119,21 @@ def _overnight(lk):
     return bool(lk and lk.get("overnight"))
 
 
+def _version(lk):
+    return str((lk or {}).get("version", "1"))
+
+
+def _fractional(lk):
+    """Version 2 runs may hold half; they are scored with half-size positions allowed."""
+    return _version(lk) != "1"
+
+
 def context_hash(overnight=False):
     """Everything that shapes the agent's answers besides the model and the bars."""
-    text = "\n".join([WEEK_VERSION, WEEK_INSTRUCTIONS, DAY_INSTRUCTIONS, agent.instructions_hash(),
-                      str(agent.DECISION_BAR), str(NOTEBOOK_MAX), str(RECORD_WEEKS)])
-    if overnight:
-        text += "\novernight\n" + WEEK_INSTRUCTIONS_OVERNIGHT + "\n" + DAY_INSTRUCTIONS_OVERNIGHT
+    week, day = _texts(overnight)
+    text = "\n".join([WEEK_VERSION, week, day, agent.instructions_hash(), str(agent.DECISION_BAR),
+                      str(NOTEBOOK_MAX), str(RECORD_WEEKS), str(DETAIL_WEEKS), str(POSITIONS), str(FORECAST_STEPS),
+                      "overnight" if overnight else "day"])
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
@@ -169,13 +181,17 @@ def parse_week(text):
     nb = obj.get("notebook")
     if not isinstance(nb, str):
         raise ValueError("notebook must be text")
-    return {"expect_return": float(r), "expect_market": m, "notebook": nb[:NOTEBOOK_MAX],
+    step = min(FORECAST_STEPS, key=lambda x: (abs(x - r), abs(x)))     # nearest step; a tie goes toward zero
+    return {"expect_return": step, "expect_market": m, "notebook": nb[:NOTEBOOK_MAX],
             "reason": str(obj.get("plan", ""))[:PLAN_MAX]}
 
 
 def parse_day(text):
-    pos, reason = agent.parse_answer(text)
-    return {"position": pos, "reason": reason}
+    obj = _first_json(text)
+    pos = obj.get("position")
+    if isinstance(pos, bool) or not isinstance(pos, (int, float)) or pos not in POSITIONS:
+        raise ValueError("position must be 0, 0.5 or 1, got %r" % (pos,))
+    return {"position": 0.5 if pos == 0.5 else int(pos), "reason": str(obj.get("reason", ""))[:agent.MAX_REASON]}
 
 
 def _pct(x, d=2):
@@ -183,6 +199,75 @@ def _pct(x, d=2):
 
 
 # ---------- what the model is shown ----------
+
+def _day_rows(blind, weeks, upto_week):
+    """One row per day of weeks 1..upto_week-1: what was known then and what came after."""
+    spans = [d for w in range(1, upto_week) for d in _days(blind, *weeks[w - 1])]
+    rows = []
+    for j, (s, e) in enumerate(spans):
+        ref = blind[s - 1]["c"] if s > 0 else blind[s]["o"]
+        hi = max(x["h"] for x in blind[s:e])
+        lo = min(x["l"] for x in blind[s:e])
+        row = {"gap": _bps(blind[s]["o"], ref), "day": _bps(blind[e - 1]["c"], blind[s]["o"]), "range": _bps(hi, lo),
+               "first2": _bps(blind[s + 1]["c"], blind[s]["o"]) if e - s >= 3 else None,
+               "after2": _bps(blind[e - 1]["c"], blind[s + 2]["o"]) if e - s >= 3 else None,
+               "night": None, "next": None}
+        if j + 1 < len(spans):
+            s2, e2 = spans[j + 1]
+            row["night"] = _bps(blind[s2]["o"], blind[e - 1]["c"])
+            row["next"] = _bps(blind[e2 - 1]["c"], blind[e - 1]["c"])
+        rows.append(row)
+    return rows
+
+
+def _stat(vals):
+    vals = [v for v in vals if v is not None]
+    if not vals:
+        return "-"
+    return "%+.0f bps avg, up %d%% (n=%d)" % (sum(vals) / len(vals), round(100.0 * sum(1 for v in vals if v > 0)
+                                                                         / len(vals)), len(vals))
+
+
+def pattern_table(blind, weeks, upto_week):
+    """Counted, not judged: what followed simple day patterns in the weeks already seen. Lets the model check its
+    rules against data without keeping a paper log."""
+    rows = _day_rows(blind, weeks, upto_week)
+    if not rows:
+        return ["(no days yet)"]
+    ranges = sorted(r["range"] for r in rows)
+    wide = 1.5 * ranges[len(ranges) // 2]
+    conds = [("every day", lambda r: True, True), ("opening gap <= -50 bps", lambda r: r["gap"] <= -50, True),
+             ("opening gap >= +50 bps", lambda r: r["gap"] >= 50, True),
+             ("first two bars up", lambda r: r["first2"] is not None and r["first2"] > 0, True),
+             ("first two bars down", lambda r: r["first2"] is not None and r["first2"] <= 0, True),
+             ("day closed above its open", lambda r: r["day"] > 0, False),
+             ("day closed below its open", lambda r: r["day"] <= 0, False),
+             ("wide day (range > %.0f bps)" % wide, lambda r: r["range"] > wide, False)]
+    out = ["Pattern | rest of the day after bar 2 | close to next open (overnight) | close to next close"]
+    for name, test, early in conds:
+        sel = [r for r in rows if test(r)]
+        out.append("%s | %s | %s | %s" % (name, _stat([r["after2"] for r in sel]) if early else "n/a (known only "
+                                          "at the close)", _stat([r["night"] for r in sel]),
+                                          _stat([r["next"] for r in sel])))
+    return out
+
+
+def _week_days(blind, a, b):
+    out = []
+    for n, (s, e) in enumerate(_days(blind, a, b), 1):
+        ref = blind[s - 1]["c"] if s > 0 else blind[s]["o"]
+        steps, prev = [], ref
+        for j in range(s, e):
+            steps.append("%+.0f" % _bps(blind[j]["c"], prev))
+            prev = blind[j]["c"]
+        out.append("Day %d: gap %+.0f bps, open to close %+.0f bps; bar-to-bar close moves (bps): %s"
+                   % (n, _bps(blind[s]["o"], ref), _bps(blind[e - 1]["c"], blind[s]["o"]), " ".join(steps)))
+    return out
+
+
+def _label(pos):
+    return {0: "cash", 0.5: "half", 1: "all in"}.get(pos, str(pos))
+
 
 def week_prompt(plan, blind, weeks, week, notebook, results, overnight=False):
     side = agent.per_side_bps(plan["costs"])
@@ -199,16 +284,10 @@ def week_prompt(plan, blind, weeks, week, notebook, results, overnight=False):
         lines.append("Week %d: %+.0f bps from the previous close (opening gap %+.0f), range %.0f bps, %d of %d days "
                      "closed above their open, mean volume %.2f"
                      % (k, _bps(blind[b - 1]["c"], ref), _bps(blind[a]["o"], ref), _bps(hi, lo), up, len(days), vol))
-    a, b = weeks[week - 2]
-    lines += ["", "Last week (week %d) day by day:" % (week - 1)]
-    for n, (s, e) in enumerate(_days(blind, a, b), 1):
-        ref = blind[s - 1]["c"] if s > 0 else blind[s]["o"]
-        steps, prev = [], ref
-        for j in range(s, e):
-            steps.append("%+.0f" % _bps(blind[j]["c"], prev))
-            prev = blind[j]["c"]
-        lines.append("Day %d: gap %+.0f bps, open to close %+.0f bps; bar-to-bar close moves (bps): %s"
-                     % (n, _bps(blind[s]["o"], ref), _bps(blind[e - 1]["c"], blind[s]["o"]), " ".join(steps)))
+    for k in range(max(1, week - DETAIL_WEEKS), week):
+        lines += ["", "Week %d day by day:" % k] + _week_days(blind, *weeks[k - 1])
+    lines += ["", "What followed simple patterns in all the days seen so far (bps; up = share of cases above zero):"]
+    lines += pattern_table(blind, weeks, week)
     lines += ["", "Your record so far:"]
     done = [results[k] for k in sorted(results) if k < week]
     if not done:
@@ -221,16 +300,20 @@ def week_prompt(plan, blind, weeks, week, notebook, results, overnight=False):
             hits += 1 if r["direction_hit"] else 0
         miss = sum(abs(r["error"]) for r in done) / len(done)
         zero = sum(abs(r["strategy_return"]) for r in done) / len(done)
-        lines.append("%d weeks: your total %s after costs; the stock %s; stock direction right %d of %d; average "
-                     "miss of your return forecast %.2f%% (always forecasting zero would miss by %.2f%%)."
-                     % (len(done), _pct(tot - 1.0), _pct(stock - 1.0), hits, len(done), miss * 100, zero * 100))
+        gap = tot - stock
+        lines.append("%d weeks: you %s after costs; simply holding the stock %s; your choices %s %s against "
+                     "holding. Stock direction right %d of %d. Your return forecasts missed by %.2f%% on average; "
+                     "always forecasting zero would have missed by %.2f%%."
+                     % (len(done), _pct(tot - 1.0), _pct(stock - 1.0), "gained" if gap >= 0 else "lost",
+                        _pct(abs(gap)).lstrip("+"), hits, len(done), miss * 100, zero * 100))
         for r in done[-RECORD_WEEKS:]:
-            lines.append("Week %d: you forecast %s and the stock %s; you got %s after costs (%d trades, costs %.1f), "
-                         "the stock moved %s (%s); days held %d of %d."
+            diff = r["strategy_return"] - r["stock_move"]
+            lines.append("Week %d: you forecast %s and the stock %s; you got %s after costs, holding gave %s, so your "
+                         "choices %s %s (%s); %d trades, costs %.1f; days with stock %d of %d."
                          % (r["week"], _pct(r["expected_return"]), r["market_expected"], _pct(r["strategy_return"]),
-                            r["trades"], r["costs_paid"], _pct(r["stock_move"]),
-                            "direction right" if r["direction_hit"] else "direction wrong", r["days_held"],
-                            len(r["days"])))
+                            _pct(r["stock_move"]), "gained" if diff >= 0 else "missed",
+                            _pct(abs(diff)).lstrip("+"), "direction right" if r["direction_hit"] else "direction wrong",
+                            r["trades"], r["costs_paid"], r["days_held"], len(r["days"])))
         last = done[-1]
         if last["week"] == week - 1:
             lines += ["", "Your choices last week, with your reasons and what happened:"]
@@ -238,28 +321,26 @@ def week_prompt(plan, blind, weeks, week, notebook, results, overnight=False):
                 if d.get("position") is None:
                     lines.append("Day %d: no decision (the day was too short)." % d["day"])
                     continue
-                lines.append("Day %d: %s. Your reason: %s. From your entry price to %s the stock moved %+.0f "
-                             "bps; %s"
-                             % (d["day"], "held" if d["position"] else "stayed in cash", d["reason"] or "-",
-                                "your next decision" if overnight else "the close",
-                                d["move_bps"], ("your result %+.0f bps after costs, %s." %
-                                                (d["result_bps"], "right" if d["right"] else "wrong")) if d["position"]
-                                else ("holding would have given %+.0f bps after costs, so staying out was %s."
-                                      % (d["hold_would_bps"], "right" if d["right"] else "wrong"))))
+                lines.append("Day %d: %s. Your reason: %s. From your entry price to %s the stock moved %+.0f bps; "
+                             "your result %+.0f bps after costs, all in would have given %+.0f bps, so the choice was "
+                             "%s." % (d["day"], _label(d["position"]), d["reason"] or "-",
+                                      "your next decision" if overnight else "the close", d["move_bps"],
+                                      d["result_bps"], d["hold_would_bps"], "right" if d["right"] else "wrong"))
     lines += ["", "Your notebook now:", notebook if notebook.strip() else "(empty)", "",
               "Now write your forecast for week %d and your rewritten notebook (at most %d characters)." % (week,
                                                                                                         NOTEBOOK_MAX),
               'Answer with one JSON object and nothing else: {"expect_return": your net return for the week after '
-              'costs as a fraction (0.004 = +0.4%), "expect_market": "up" or "down" (where the stock ends the '
-              'week), "plan": "one or two sentences: how you will trade this week and why", "notebook": "..."}']
+              'costs, one of -0.01, -0.005, 0, 0.005, 0.01, "expect_market": "up" or "down" (where the stock ends '
+              'the week), "plan": "one or two sentences: how you will trade this week and why", "notebook": "..."}']
     return "\n".join(lines)
 
 
-def day_prompt(hist, side, forecast, overnight=False, holding=False):
+def day_prompt(hist, side, forecast, overnight=False, holding=0):
     body = agent.prompt_for(hist, side).split("\n", 1)[1]
-    if overnight:
-        body = ("You hold the stock now (kept from your last decision)." if holding
-                else "You are in cash now.") + "\n" + body
+    body = body.replace('Answer with {"position": 0 or 1, "reason": "..."} only.',
+                        'Answer with {"position": 0, 0.5 or 1, "reason": "..."} only.')
+    body = ("You own now: %s (%s)." % (_label(holding), "kept from your last decision" if overnight
+                                        else "nothing is kept overnight")) + "\n" + body
     return "\n".join([_texts(overnight)[1], "", "Your notebook:", forecast["notebook"] or "(empty)", "",
                       "Your forecast for this week: your net return %s, the stock %s. Your plan: %s"
                       % (_pct(forecast["expect_return"]), forecast["expect_market"], forecast["plan"] or "-"),
@@ -296,9 +377,15 @@ def lock(folder, model, budget, first_week=2, last_week=None, notebook_from=None
     crit.update(criteria or {})
     if sorted(crit) != sorted(judge.DEFAULT_CRITERIA):
         raise ValueError("criteria keys are %s" % sorted(judge.DEFAULT_CRITERIA))
+    lens = [e - s for s, e in _days(blind, *weeks[0])]
+    day_bars = max(set(lens), key=lambda n: (lens.count(n), n))       # the usual day length, from the free week 1
+    if overnight and day_bars < 3:
+        raise ValueError("days of %d bars are too short to decide before the last bar" % day_bars)
     return T.ledger_append(folder, {
         "kind": "agent_week_lock", "model": model, "budget": float(budget), "first_week": first_week,
         "last_week": last, "context_hash": context_hash(overnight), "overnight": bool(overnight),
+        "version": WEEK_VERSION, "day_bars": day_bars,
+        "decide_at_bar": (day_bars - 1) if overnight else agent.DECISION_BAR,
         "request": agent.request_settings(),
         "decision_bar": agent.DECISION_BAR, "notebook_start": notebook,
         "notebook_start_from": os.path.basename(notebook_from) if notebook_from else None,
@@ -345,7 +432,10 @@ def _week_index(weeks, n):
     return out
 
 
-def _day_strategy(asker, side, week_of, forecasts, record, overnight=False):
+def _day_strategy(asker, side, week_of, forecasts, record, overnight=False, decide_at=None):
+    """Asks the model once a day, when the day has `decide_at` bars; the answer fills at the next bar's open.
+    Overnight, a day shorter than that has no decision and the position is kept."""
+    decide_at = agent.DECISION_BAR if decide_at is None else decide_at
     state = {"day": None, "pos": 0}
 
     def strategy(hist, position):
@@ -362,26 +452,27 @@ def _day_strategy(asker, side, week_of, forecasts, record, overnight=False):
             state["day"] = day
             if not overnight:
                 state["pos"] = 0
-        if k < agent.DECISION_BAR:
+        if k < decide_at:
             return state["pos"] if overnight else 0
-        if k == agent.DECISION_BAR:
-            e = asker.ask(day_prompt(hist, side, forecasts[w], overnight, state["pos"] == 1), "day_decision",
+        if k == decide_at:
+            e = asker.ask(day_prompt(hist, side, forecasts[w], overnight, state["pos"]), "day_decision",
                           parse_day, {"position": state["pos"] if overnight else 0})
             state["pos"] = e["position"]
-            record[i - agent.DECISION_BAR + 1] = (i, e)
+            record[i - decide_at + 1] = (i, e)
         return state["pos"]
 
     return strategy
 
 
-def _score_week(plan, blind, weeks, w, strategy, record, overnight=False):
+def _score_week(plan, blind, weeks, w, strategy, record, overnight=False, fractional=False):
     a, b = weeks[w - 1]
     costs = plan["costs"]
-    head = replay._score_fn(plan, blind, a, b, strategy, flatten_eod=not overnight)
+    head = replay._score_fn(plan, blind, a, b, strategy, flatten_eod=not overnight, fractional=fractional)
     side = agent.per_side_bps(costs)
     if overnight:
         return head, _overnight_days(blind, a, b, record, side)
-    run = engine.backtest(blind[:b], strategy, costs, capital=replay.CAPITAL, flatten_eod=True)
+    run = engine.backtest(blind[:b], strategy, costs, capital=replay.CAPITAL, flatten_eod=True,
+                          fractional=fractional)
     by_day = {t["entry_t"][:10]: t for t in run["trades"] if t["entry_t"] >= blind[a]["t"]}
     days = []
     for n, (s, e) in enumerate(_days(blind, a, b), 1):
@@ -425,8 +516,8 @@ def _overnight_days(blind, a, b, record, side):
         end = blind[nxt]["o"] if nxt is not None and nxt < b else blind[b - 1]["c"]
         move = _bps(end, blind[entry]["o"])
         pos = ans["position"]
-        hold_would = move - (side if prev == 0 else 0.0)
-        result = (move - (side if prev == 0 else 0.0)) if pos else (-side if prev == 1 else 0.0)
+        hold_would = move - side * abs(1 - prev)
+        result = pos * move - side * abs(pos - prev)
         right = (result > 0) if pos else (hold_would <= 0)
         out.append({"day": n, "position": pos, "reason": ans.get("reason", ""), "failed": ans["failed"],
                     "decided_at": i_dec, "move_bps": move, "hold_would_bps": hold_would, "result_bps": result,
@@ -442,6 +533,9 @@ def run(folder, client, log=None):
         raise ValueError("no agent run is locked here; run `lock` first so the model, weeks, budget and criteria "
                          "are fixed before anything runs")
     overnight = _overnight(lk)
+    if _version(lk) != WEEK_VERSION:
+        raise ValueError("this run was locked with version %s of the agent; this code is version %s. Its reports "
+                         "still work; to continue it, use the code at commit 2624c81" % (_version(lk), WEEK_VERSION))
     if lk["context_hash"] != context_hash(overnight):
         raise ValueError("the agent's instructions or request settings changed after the lock; use a new folder")
     side = agent.per_side_bps(plan["costs"])
@@ -463,8 +557,8 @@ def run(folder, client, log=None):
         if w not in results:
             record = {}
             head, days = _score_week(plan, blind, weeks, w,
-                                     _day_strategy(asker, side, week_of, forecasts, record, overnight), record,
-                                     overnight)
+                                     _day_strategy(asker, side, week_of, forecasts, record, overnight,
+                                                   lk["decide_at_bar"]), record, overnight, fractional=True)
             a, b = weeks[w - 1]
             stock_move = blind[b - 1]["c"] / blind[a - 1]["c"] - 1.0
             f = forecasts[w]
@@ -548,7 +642,7 @@ def write_memory(folder):
                 outcome = ("%+.0f bps after costs" % d["result_bps"]) if d["position"] else (
                     "holding would have given %+.0f bps" % d["hold_would_bps"])
                 lines.append("| %d | %s | %s | %+.0f bps | %s | %s |" % (
-                    d["day"], "hold" if d["position"] else "cash",
+                    d["day"], _label(d["position"]),
                     (d["reason"] or "-").replace("|", "/").replace("\n", " "), d["move_bps"], outcome,
                     "right" if d["right"] else "wrong"))
         lines.append("")
@@ -598,13 +692,14 @@ def _fn_for_row(rows, overnight):
     return lambda r: _positions_strategy(_decisions([r]))
 
 
-def _rescore_agent(plan, blind, weeks, rows, costs, overnight=False):
+def _rescore_agent(plan, blind, weeks, rows, costs, overnight=False, fractional=False):
     p = dict(plan, costs=costs)
     total = 1.0
     fn_for = _fn_for_row(rows, overnight)
     for r in rows:
         a, b = weeks[r["week"] - 1]
-        total *= 1.0 + replay._score_fn(p, blind, a, b, fn_for(r), flatten_eod=not overnight)["strategy_return"]
+        total *= 1.0 + replay._score_fn(p, blind, a, b, fn_for(r), flatten_eod=not overnight,
+                                        fractional=fractional)["strategy_return"]
     return total - 1.0
 
 
@@ -614,7 +709,7 @@ def agent_money(folder, d, start):
     plan, blind, weeks, _ = replay._open(folder)
     overnight = _overnight(d["lock"])
     end, paid = report.money_path(plan, blind, weeks, d["rows"], start, _fn_for_row(d["rows"], overnight),
-                                  flatten_eod=not overnight)
+                                  flatten_eod=not overnight, fractional=_fractional(d["lock"]))
     return {"start": float(start), "agent_end": end, "agent_costs": paid,
             "stock_end": start * (1.0 + d["stock_total"]),
             "hold_costs": start * 2 * report.per_side_bps(d["costs"]) / 1e4}
@@ -635,11 +730,11 @@ def build(folder):
         cum.append(total - 1.0)
         cum_stock.append(stock - 1.0)
     n = len(rows)
-    held = [d for r in rows for d in r["days"] if d.get("position") == 1]
+    held = [d for r in rows for d in r["days"] if d.get("position")]
     out = [d for r in rows for d in r["days"] if d.get("position") == 0]
     spent = sum(e.get("cost", 0.0) for e in T.ledger_read(os.path.join(folder, "agent")))
     sens = [{"label": text, "per_side_bps": report.per_side_bps(c),
-             "total_return": _rescore_agent(plan, blind, weeks, rows, c, _overnight(lk))} for _, text, c in report.scenarios(plan["costs"])]
+             "total_return": _rescore_agent(plan, blind, weeks, rows, c, _overnight(lk), _fractional(lk))} for _, text, c in report.scenarios(plan["costs"])]
     return {
         "rows": rows, "forecasts": fc, "lock": lk, "costs": plan["costs"], "cum": cum, "cum_stock": cum_stock,
         "agent_total": cum[-1], "stock_total": cum_stock[-1], "n": n, "spent": spent,
@@ -942,7 +1037,7 @@ def compare_build(agent_folder, rules_folder, start_money=None):
         rd = report.build(rules_folder)
         wanted = {x["week"] for x in rows}
         r_end, r_paid = report.money_path(rplan, blind, weeks, [w for w in rd["weeks"] if w["week"] in wanted],
-                                          start_money, lambda r: replay._fn(r["strategy"], r["params"]))
+                                          start_money, lambda r: replay.week_fn(rplan, blind, weeks, rd["weeks"], r))
         money = {"start": float(start_money), "agent_end": am["agent_end"], "agent_costs": am["agent_costs"],
                  "rules_end": r_end, "rules_costs": r_paid, "stock_end": start_money * (1.0 + rows[-1]["cum_stock"]),
                  "hold_costs": am["hold_costs"]}

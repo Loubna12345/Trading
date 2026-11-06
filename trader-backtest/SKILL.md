@@ -36,6 +36,9 @@ This is step 1 of docs/ROADMAP.md: the command line only runs buy and hold. Stra
   fee. The command line refuses to run until you state commission, spread and slippage in basis points.
   Taking the figures from your broker's price list is your job; the code assumes none.
 - `flatten_eod` closes the position at the last bar of each day and carries nothing overnight.
+- `fractional=True` lets a strategy return 0, 0.5 or 1: the share of the account to hold (long only). Only the
+  difference is traded and charged. A trade runs from the first buy out of cash back to cash; its `ret` is the
+  account's change over that time.
 - Sharpe uses a risk-free rate of zero, and needs `--periods-per-year` (252 for daily bars) because the
   annual figure depends on how often the bars come. The skill will not guess it.
 - Fewer than 100 trades produces a warning. The 100 is this project's rule of thumb, not a sourced number.

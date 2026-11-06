@@ -81,18 +81,20 @@ def _save(reports, kind, page, summary):
     return e
 
 
-def save_rules(reports, folder, start_money, label=""):
+def save_rules(reports, folder, start_money, label="", round_name=""):
     d = report.build(folder)
     m = report.money(folder, d, start_money)
     src, state = _state(folder)
     page = report.render(d, label=label, start_money=m)
     f = d["forecast"]
     return _save(reports, "rules", page, {
-        "source": src, "state": state, "label": label, "who": "Claude by hand, rules from the library",
+        "source": src, "state": state, "label": label, "round": round_name,
+        "who": "Claude by hand, rules from the library",
         "weeks": [d["weeks"][0]["week"], d["weeks"][-1]["week"]], "n_weeks": len(d["weeks"]),
         "total_return": d["rules_total"], "stock_return": d["stock_total"], "start_money": m["start"],
         "end_money": m["rules_end"], "costs_money": m["rules_costs"], "stock_end_money": m["stock_end"],
-        "direction_hits": f.get("direction_hits"), "rules_tried": d["rules_tried"]})
+        "direction_hits": f.get("direction_hits"), "rules_tried": d["rules_tried"],
+        "overnight": replay.overnight(replay._open(folder)[0])})
 
 
 def _check_complete(d, partial):
@@ -105,7 +107,7 @@ def _check_complete(d, partial):
     return d["n"] >= planned, planned
 
 
-def save_agent(reports, folder, start_money, label="", partial=False):
+def save_agent(reports, folder, start_money, label="", partial=False, round_name=""):
     d = weekly.build(folder)
     complete, planned = _check_complete(d, partial)
     m = weekly.agent_money(folder, d, start_money)
@@ -113,7 +115,9 @@ def save_agent(reports, folder, start_money, label="", partial=False):
     page = weekly.render_agent(d, label=label, start_money=m)
     rows = d["rows"]
     return _save(reports, "agent", page, {
-        "source": src, "state": state, "label": label, "who": "agent %s" % d["lock"]["model"],
+        "source": src, "state": state, "label": label, "round": round_name,
+        "overnight": weekly._overnight(d["lock"]), "version": weekly._version(d["lock"]),
+        "who": "agent %s" % d["lock"]["model"],
         "model": d["lock"]["model"], "notebook_from": d["lock"].get("notebook_start_from"),
         "weeks": [rows[0]["week"], rows[-1]["week"]], "n_weeks": d["n"], "total_return": d["agent_total"],
         "stock_return": d["stock_total"], "start_money": m["start"], "end_money": m["agent_end"],
@@ -122,7 +126,7 @@ def save_agent(reports, folder, start_money, label="", partial=False):
         "planned_weeks": planned})
 
 
-def save_comparison(reports, agent_folder, rules_folder, start_money, label="", partial=False):
+def save_comparison(reports, agent_folder, rules_folder, start_money, label="", partial=False, round_name=""):
     complete, planned = _check_complete(weekly.build(agent_folder), partial)
     c = weekly.compare_build(agent_folder, rules_folder, start_money=start_money)
     a_src, a_state = _state(agent_folder)
@@ -133,7 +137,7 @@ def save_comparison(reports, agent_folder, rules_folder, start_money, label="", 
     page = weekly.render_compare(c, label=label)
     m = c["money"]
     return _save(reports, "comparison", page, {
-        "source": "%s vs %s" % (a_src, r_src), "state": a_state + ":" + r_state, "label": label,
+        "source": "%s vs %s" % (a_src, r_src), "state": a_state + ":" + r_state, "label": label, "round": round_name,
         "who": "agent run %s vs rules run %s" % (a_run or "(not saved)", r_run or "(not saved)"),
         "agent_run": a_run, "rules_run": r_run, "weeks": [c["rows"][0]["week"], c["rows"][-1]["week"]],
         "n_weeks": c["n"], "total_return": c["agent_total"], "rules_return": c["rules_total"],
@@ -197,6 +201,29 @@ def write_index(reports):
                          html.escape(e["who"]), e["weeks"][0], e["weeks"][1], html.escape(result), html.escape(money),
                          pct(e["stock_return"]), html.escape(extra)))
         p.append("</table></div>")
+    rounds = []
+    for e in saved:
+        if e["kind"] == "comparison" and e.get("round") and e.get("complete") is not False and e["round"] not in rounds:
+            rounds.append(e["round"])
+    for name in rounds:
+        rows = [e for e in saved if e["kind"] == "comparison" and e.get("round") == name
+                and e.get("complete") is not False]
+        p.append("<h2>Round: %s</h2><p class=\"sub\">Each stock started with %s. Totals add up every stock.</p>"
+                 "<div class=\"scroll\"><table><tr><th class=\"l\">Comparison</th><th class=\"l\">Runs</th>"
+                 "<th>Agent</th><th>Rules</th><th>Just holding</th><th class=\"l\">Agent vs holding</th></tr>"
+                 % (html.escape(name), eur(rows[0]["start_money"])))
+        for e in rows:
+            v = {x["against"]: x["verdict"] for x in e["verdicts"]}
+            p.append("<tr><td class=\"l\"><a href=\"%s\">%s</a></td><td class=\"l\">%s</td><td>%s</td><td>%s</td>"
+                     "<td>%s</td><td class=\"note\">%s</td></tr>" % (
+                         html.escape(e["file"]), html.escape(e["file"]), html.escape(e["source"]), eur(e["end_money"]),
+                         eur(e["rules_end_money"]), eur(e["stock_end_money"]),
+                         html.escape(v.get("holding the stock", ""))))
+        tot = lambda k: sum(e[k] for e in rows)
+        start = sum(e["start_money"] for e in rows)
+        p.append("<tr><th class=\"l\">Total</th><th class=\"l\">%d stocks, %s in</th><th>%s</th><th>%s</th>"
+                 "<th>%s</th><th></th></tr></table></div>" % (len(rows), eur(start), eur(tot("end_money")),
+                                                              eur(tot("rules_end_money")), eur(tot("stock_end_money"))))
     agents = [e for e in saved if e["kind"] == "agent" and e.get("complete") is not False]
     if len(agents) > 1:
         p.append("<h2>Is the agent getting better?</h2><p>Agent runs in order: %s. A rising line over runs on the "
@@ -223,6 +250,7 @@ def main(argv=None):
         x.add_argument("--reports", required=True)
         x.add_argument("--start-money", type=float, required=True, help="starting amount in euro, e.g. 500")
         x.add_argument("--label", default="")
+        x.add_argument("--round", default="", help="a name shared by the runs of one round, e.g. 'round 2'")
         if name != "rules":
             x.add_argument("--partial", action="store_true", help="save an agent run that has not finished")
     x = sub.add_parser("note")
@@ -234,11 +262,11 @@ def main(argv=None):
     a = ap.parse_args(argv)
     try:
         if a.cmd == "rules":
-            e = save_rules(a.reports, a.dir, a.start_money, a.label)
+            e = save_rules(a.reports, a.dir, a.start_money, a.label, a.round)
         elif a.cmd == "agent":
-            e = save_agent(a.reports, a.dir, a.start_money, a.label, a.partial)
+            e = save_agent(a.reports, a.dir, a.start_money, a.label, a.partial, a.round)
         elif a.cmd == "compare":
-            e = save_comparison(a.reports, a.dir, a.rules_dir, a.start_money, a.label, a.partial)
+            e = save_comparison(a.reports, a.dir, a.rules_dir, a.start_money, a.label, a.partial, a.round)
         elif a.cmd == "note":
             add_note(a.reports, a.file, a.text)
             print(write_index(a.reports))

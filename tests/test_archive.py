@@ -120,6 +120,16 @@ class Archive(Base):
         self.play_hand(5)
         self.assertEqual(archive.save_rules(self.reports, self.hand, 500.0)["file"], "rules-run-02.html")
 
+    def test_a_round_adds_up_every_stock(self):
+        archive.save_rules(self.reports, self.hand, 500.0, round_name="round 9")
+        archive.save_agent(self.reports, self.dir, 500.0, round_name="round 9")
+        c = archive.save_comparison(self.reports, self.dir, self.hand, 500.0, round_name="round 9")
+        with open(os.path.join(self.reports, "index.html")) as fh:
+            page = fh.read()
+        self.assertIn("Round: round 9", page)
+        self.assertIn("1 stocks, %s in" % weekly.report.eur(500.0), page)
+        self.assertIn(weekly.report.eur(c["end_money"]), page)
+
     def test_command_line(self):
         for args in (["rules", "--dir", self.hand, "--reports", self.reports, "--start-money", "500"],
                      ["agent", "--dir", self.dir, "--reports", self.reports, "--start-money", "500"],
