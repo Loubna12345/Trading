@@ -30,7 +30,7 @@ documented.
 | 3 | `trader-strategies` | done: trend, opening-range breakout, VWAP reversion, long-only, no default parameters |
 | 4 | `trader-validate` | done: cost stress, delay scan, walk-forward, deflated Sharpe on the alpha, trade count, recent stretch, bad-bar check; verdict PASS/FAIL/INCONCLUSIVE |
 | B | `trader-training` | built (see below); only tested on made-up data |
-| B2 | `trader-replay` | built: weekly replay with hidden stock and dates, rule logged before each reveal, sealed last third, one final test per rule; made-up data only so far |
+| B2 | `trader-replay` | built: weekly replay with hidden stock and dates, forecast and rule logged before each reveal, sealed last third, one final test per rule, HTML report; first run on SAP done (see below) |
 | 5 | asset profiles | not started: hours, costs, tax and limits per stocks, ETFs, crypto; crypto needs its own tax module |
 | 6 | journal and paper broker | not started: Trading 212 demo adapter behind the risk check and approval |
 | 7 | weekly review loop | not started |
@@ -79,6 +79,21 @@ First live download worked on her Mac (SAP.DE, 60-minute bars, 4349 bars). It ex
 Python on the Mac lacked certificates (fix: install certifi and set SSL_CERT_FILE), asking for exactly 730 days
 returned HTTP 422 (700 worked), and Yahoo adds a live-price row inside the forming bar (now dropped). She asked
 that Claude not read the downloaded results until the replay tool exists; reading goes through the replay tool.
+
+## First replay run on SAP (2026-11-06, dry run, placeholder costs 0 / 2 / 1 bps)
+
+Played by Claude by hand, weeks 2 to 64 of 97 (33 sealed weeks untouched, no final test run). Folder
+`replay-dryrun` and report `sap-replay-report.html` sit next to the repo on her laptop (Documents/trading), plus
+the helper `play_week.py`. Result: rules -6.1% after costs, holding the stock -31.3% (true move, weeks 2 to 64),
+staying out 0. Trend (window 6) about break-even after costs (-0.3%, 132 trades, about 5 points of costs), VWAP
+(25 bps, warmup 4) -5.8%. Assumptions: A (momentum after a rising week) direction right 11 of 22, B (rebound after
+a fall) 6 of 20 and the stock kept falling, C (stay out after a flat week) neutral, D (stay out after a drop of 5%
+or more, added after seeing the week-13 loss) missed a +24.8% rebound over its 6 weeks. Return forecasts no better
+than always zero; direction right 29 of 63 against 31 for always-up. Overnight gaps -15.2% and intraday -19.0% over
+the stretch, so the early guess that overnight dominated did not hold. No edge found; a falling stock favours
+anything that is often out of the market. Per-week buy-and-hold in the ledger skips each week's first bar and the
+gap before it; the report uses the true move. SAP's open weeks are now seen by Claude, so use other stocks for a
+clean replay. Costs must be confirmed from her broker's price list before a real replay.
 
 ## Unverified or open
 
