@@ -306,6 +306,10 @@ def final(folder, strategy, params):
         raise ValueError("this rule was never written down for a week; the final test is for frozen rules only")
     if any(e["rule"] == key for e in st["finals"]):
         raise ValueError("this rule already had its one final test")
+    if any(e.get("kind") == "comparison_result" and e.get("window") == "sealed" and e.get("rule_key") == key
+           for e in entries):
+        raise ValueError("this rule already ran on the sealed weeks in a sealed comparison (trader-agent); that "
+                         "was its one final test")
     a = weeks[st["open"]][0]
     res = _score(plan, blind, a, len(blind), strategy, params)
     res.update({"kind": "final", "rule": key, "weeks": plan["sealed_weeks"], "rules_tried": len(tried)})

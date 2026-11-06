@@ -260,8 +260,33 @@ class Judge(Env):
             self.lock()
 
     def test_sealed_window_covers_the_sealed_weeks(self):
+        self.play_week(2)
         e = self.lock("sealed")
         self.assertEqual((e["first_week"], e["last_week"]), (17, 25))
+
+    def test_sealed_window_needs_a_rule_frozen_in_the_replay(self):
+        with self.assertRaisesRegex(ValueError, "never written down"):
+            self.lock("sealed")
+
+    def test_sealed_window_refused_when_the_replay_final_already_ran_for_the_rule(self):
+        self.play_week(2)
+        replay.final(self.dir, "trend", {"window": 3})
+        with self.assertRaisesRegex(ValueError, "final test"):
+            self.lock("sealed")
+
+    def test_sealed_run_refused_when_the_replay_final_ran_after_the_lock(self):
+        self.play_week(2)
+        self.lock("sealed")
+        replay.final(self.dir, "trend", {"window": 3})
+        with self.assertRaisesRegex(ValueError, "final test"):
+            judge.run(self.dir, Fake(), window="sealed")
+
+    def test_replay_final_refused_after_the_sealed_comparison_for_that_rule(self):
+        self.play_week(2)
+        self.lock("sealed")
+        judge.run(self.dir, Fake(), window="sealed")
+        with self.assertRaisesRegex(ValueError, "sealed comparison"):
+            replay.final(self.dir, "trend", {"window": 3})
 
     def test_open_window_cannot_reach_into_the_sealed_weeks(self):
         with self.assertRaises(ValueError):
@@ -295,6 +320,7 @@ class Judge(Env):
         self.assertEqual(replay.T.ledger_verify(self.dir), len(kinds))
 
     def test_sealed_window_runs_once(self):
+        self.play_week(2)
         self.lock("sealed")
         judge.run(self.dir, Fake())
         with self.assertRaises(ValueError):

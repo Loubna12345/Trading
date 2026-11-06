@@ -27,6 +27,8 @@ python3 "${CLAUDE_SKILL_DIR}/judge.py" status --dir trader/replay/a
 
 - One lock per window. The open window can be rerun for free from the saved answers; the sealed window runs
   once and uses up the replay's final test for that folder, so freeze the rule and run the open window first.
+  Enforced: the sealed window takes only a rule written down for a week in the replay, not one that already had
+  its replay final; and after a sealed comparison the replay refuses a final for that rule.
 - Arms: the agent, the named rule, flat (never trade) and the stock itself before costs. Same costs, same
   one-bar delay, same end-of-day flatten.
 - Verdict needs at least 20 weeks, a paired bootstrap p below 0.05 on the weekly differences, a total-return gap

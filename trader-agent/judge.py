@@ -89,6 +89,16 @@ def _results(entries):
     return [e for e in entries if e["kind"] == "comparison_result"]
 
 
+def _check_sealed_allowed(entries, rule_key):
+    """The sealed weeks are the replay's one final test: only for a rule frozen in the replay, and only if that
+    rule has not had its replay final yet (the replay in turn refuses a final after a sealed comparison)."""
+    if not any(e["kind"] == "prediction" and e["rule"] == rule_key for e in entries):
+        raise ValueError("%s was never written down for a week in this replay; the sealed window is for a frozen "
+                         "rule only" % rule_key)
+    if any(e["kind"] == "final" and e["rule"] == rule_key for e in entries):
+        raise ValueError("%s already had its replay final test on the sealed weeks" % rule_key)
+
+
 def lock(folder, window, rule, rule_params, model, budget, first_week=None, last_week=None, seed=1,
          criteria=None):
     plan, blind, weeks, entries = replay._open(folder)
@@ -108,6 +118,7 @@ def lock(folder, window, rule, rule_params, model, budget, first_week=None, last
         if not (isinstance(first, int) and isinstance(last, int) and 1 <= first <= last <= n_open):
             raise ValueError("the open window must lie inside weeks 1..%d" % n_open)
     else:
+        _check_sealed_allowed(entries, replay._rule_key(rule, rule_params))
         first, last = n_open + 1, plan["weeks"]
         if (first_week not in (None, first)) or (last_week not in (None, last)):
             raise ValueError("the sealed window is always weeks %d..%d" % (first, last))
@@ -155,6 +166,8 @@ def run(folder, client, window=None):
     lk = locks[window]
     if window == "sealed" and any(e["window"] == "sealed" for e in _results(entries)):
         raise ValueError("the sealed window runs once; its result is already in the ledger")
+    if window == "sealed":
+        _check_sealed_allowed(entries, lk["rule_key"])
     if lk["instructions_hash"] != agent.instructions_hash() or lk["prompt_version"] != agent.PROMPT_VERSION:
         raise ValueError("the agent's instructions changed after the lock; start a new replay folder to change them")
     first, last = lk["first_week"], lk["last_week"]

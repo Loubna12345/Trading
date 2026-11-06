@@ -113,6 +113,18 @@ logged in the ledger, plan untouched. `play_week.py` now finds the replay next t
   1/(n-1), and reports `trial_variance_source`. Still open: with several similar settings the measured spread is
   small and understates luck; changing that would move existing pass rates.
 - `trader-replay`: new `relocate` command (above).
+- `trader-agent` (never run against a real model yet):
+  - `judge.py lock` crashed on the command line (read a budget option that did not exist); fixed and tested.
+  - All listed models think before answering and thinking counts against `max_tokens`; the old limit of 300
+    could cut answers off, and a cut answer counted as "stay out". Now `max_tokens` 16000 and effort `medium`
+    set explicitly (the default differs by model); both are in the locked hash and the cache key
+    (PROMPT_VERSION 2); the stop reason of every attempt is logged. Model IDs and prices were checked against
+    the claude-api reference on 2026-11-06 and match.
+  - The budget is checked before every call against the most that call could cost, so it is a hard cap.
+  - The sealed window now takes only a rule frozen in the replay and shares the replay's one final test with
+    it, in both directions.
+  - Not changed: the `hold` arm's weekly returns skip the gap between weeks while its total includes it (not
+    used in the verdict); no refusal fallback to another model (the arm must be the locked model).
 
 ## Unverified or open
 
