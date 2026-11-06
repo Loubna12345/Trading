@@ -23,6 +23,7 @@ python3 "${CLAUDE_SKILL_DIR}/replay.py" predict --dir trader/replay/a --week 2 -
 python3 "${CLAUDE_SKILL_DIR}/replay.py" reveal --dir trader/replay/a --week 2
 python3 "${CLAUDE_SKILL_DIR}/replay.py" final --dir trader/replay/a --strategy trend --param window=6
 python3 "${CLAUDE_SKILL_DIR}/replay.py" status --dir trader/replay/a
+python3 "${CLAUDE_SKILL_DIR}/report.py" --dir trader/replay/a --out report.html --label "Dry run, placeholder costs"
 ```
 
 ## What it does
@@ -43,6 +44,16 @@ python3 "${CLAUDE_SKILL_DIR}/replay.py" status --dir trader/replay/a
 - Each result stores the difference between forecast and actual (`error`, and whether the direction was right).
   `status` sums it up: mean error, mean absolute error next to the error of always forecasting zero, direction
   hits next to always-saying-up and a coin. A forecaster is only worth listening to if it beats those.
+
+## The report page
+
+`report.py` writes one self-contained HTML page (no downloads, light and dark): the rules against holding the
+stock and against staying out, a cumulative chart, the result of each week, when the stock moved (overnight or
+inside the day), the assumptions behind the rule choices (a note starting with a letter, such as `A: ...`, groups
+the weeks), a table per rule, forecast scorecard, limits, and every week in a table. It checks the ledger chain,
+uses prices only for weeks already revealed, and never shows the stock's name, the dates or file paths. The
+"holding" figure is the true move of the stock from the start of the first scored week to the end of the last,
+not the sum of the per-week buy-and-hold results (which skip each week's first bar and the gap before it).
 
 ## Limits (read before trusting a result)
 
