@@ -32,7 +32,13 @@ python3 "${CLAUDE_SKILL_DIR}/judge.py" status --dir trader/replay/a
 - Verdict needs at least 20 weeks, a paired bootstrap p below 0.05 on the weekly differences, a total-return gap
   of at least 1 point, and a profit after costs for the winner. Otherwise NO CLEAR DIFFERENCE or INCONCLUSIVE.
 - A hard budget in US dollars stops the run; decisions already paid for stay in `<folder>/agent/ledger.jsonl`
-  (hash-chained) and a rerun continues from there. An unusable answer is retried once, then counts as "stay out".
+  (hash-chained) and a rerun continues from there. Before every call the budget is checked against the most that
+  call could cost (whole prompt plus `max_tokens` of output), so the cap is never passed. An unusable answer is
+  retried once, then counts as "stay out"; its stop reason (for example `max_tokens` or `refusal`) is logged.
+- Request settings: `max_tokens` 16000 and effort `medium`, fixed in `agent.py`. The listed models think before
+  answering and thinking counts against `max_tokens`, so a small limit cuts the answer off. Effort is set
+  explicitly because the default differs by model. The settings are part of the locked hash and the cache key.
+- No refusal fallback to another model is used: the arm must be the model that was locked.
 - Do a cheap rehearsal (Haiku) in a separate scratch replay folder, not in the one you will judge.
 - A model that remembers how the real period went may recognise it despite the hidden names and dates, so a
   past-data win is practice; the sealed weeks after the model's knowledge and forward paper trading count more.

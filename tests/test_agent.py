@@ -127,12 +127,40 @@ class Behaviour(Env):
     def test_budget_cap_stops_and_a_rerun_continues_from_what_was_paid_for(self):
         fake = Fake()
         with self.assertRaises(agent.BudgetExceeded):
-            run_agent(self, fake, 2, 4, budget=0.0100)          # 0.003 per call: stops after four calls
+            run_agent(self, fake, 2, 4, budget=0.2)
         done = len(fake.prompts)
-        self.assertTrue(3 <= done <= 5, done)
+        self.assertTrue(0 < done < 3 * WEEKS_DAYS, done)
         more = Fake()
         run_agent(self, more, 2, 4, budget=100.0)
         self.assertEqual(len(more.prompts), 3 * WEEKS_DAYS - done)
+
+    def test_budget_is_never_exceeded_even_when_every_answer_uses_all_its_tokens(self):
+        # The check is made before each call against the most one call could cost, so the cap holds even when
+        # the model writes up to max_tokens every time.
+        heavy = Fake(usage={"input_tokens": 1000, "output_tokens": agent.MAX_TOKENS})
+        with self.assertRaises(agent.BudgetExceeded):
+            run_agent(self, heavy, 2, 4, budget=0.5)
+        spent = sum(e.get("cost", 0.0) for e in replay.T.ledger_read(os.path.join(self.dir, "agent")))
+        self.assertGreater(spent, 0.0)
+        self.assertLessEqual(spent, 0.5)
+
+    def test_a_cut_off_answer_is_logged_with_its_stop_reason(self):
+        fake = lambda prompt: ('{"posi', dict(USAGE), "max_tokens")
+        strat, _, _, _ = run_agent(self, fake, 2, 2)
+        e = replay.T.ledger_read(os.path.join(self.dir, "agent"))[0]
+        self.assertTrue(e["failed"])
+        self.assertEqual(e["stop_reasons"], ["max_tokens", "max_tokens"])
+        self.assertEqual(e["position"], 0)
+
+    def test_request_settings_are_part_of_the_locked_hash_and_the_cache_key(self):
+        before = agent.instructions_hash()
+        with mock.patch.object(agent, "EFFORT", "low"):
+            self.assertNotEqual(agent.instructions_hash(), before)
+        run_agent(self, Fake(), 2, 2)
+        again = Fake()
+        with mock.patch.object(agent, "MAX_TOKENS", agent.MAX_TOKENS + 1):
+            run_agent(self, again, 2, 2)
+        self.assertEqual(len(again.prompts), WEEKS_DAYS)         # other settings: not served from the cache
 
     def test_unknown_model_is_refused_because_its_spend_could_not_be_counted(self):
         with self.assertRaises(ValueError):
@@ -163,7 +191,7 @@ class RealClient(unittest.TestCase):
         with mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test-123"}):
             c = agent.AnthropicClient(MODEL, max_tokens=200)
             with mock.patch.object(agent.urllib.request, "urlopen", return_value=self.reply()) as op:
-                text, usage = c("hello")
+                text, usage, _ = c("hello")
         req = op.call_args[0][0]
         self.assertEqual(req.get_header("X-api-key"), "sk-test-123")
         body = json.loads(req.data)
@@ -174,6 +202,22 @@ class RealClient(unittest.TestCase):
         self.assertNotIn("sk-test-123", repr(c) + str(c.__dict__.get("model")))
         self.assertEqual(usage["input_tokens"], 10)
         self.assertIn("position", text)
+
+    def test_default_request_leaves_room_for_thinking_and_fixes_the_effort(self):
+        with mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test-123"}):
+            c = agent.AnthropicClient(MODEL)
+            body = json.loads(self.reply().read.return_value)
+            body["stop_reason"] = "end_turn"
+            resp = self.reply()
+            resp.read.return_value = json.dumps(body).encode()
+            with mock.patch.object(agent.urllib.request, "urlopen", return_value=resp) as op:
+                text, usage, stop = c("hello")
+        sent = json.loads(op.call_args[0][0].data)
+        self.assertEqual(sent["max_tokens"], agent.MAX_TOKENS)
+        self.assertGreaterEqual(agent.MAX_TOKENS, 4000)
+        self.assertEqual(sent["output_config"], {"effort": agent.EFFORT})
+        self.assertNotIn("temperature", sent)
+        self.assertEqual(stop, "end_turn")
 
     def test_api_errors_become_refusals_that_never_echo_the_key(self):
         import urllib.error

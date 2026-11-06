@@ -118,6 +118,7 @@ def lock(folder, window, rule, rule_params, model, budget, first_week=None, last
     entry = {"kind": "comparison_lock", "window": window, "first_week": first, "last_week": last,
              "rule": rule, "rule_params": rule_params, "rule_key": replay._rule_key(rule, rule_params),
              "model": model, "prompt_version": agent.PROMPT_VERSION, "instructions_hash": agent.instructions_hash(),
+             "request": agent.request_settings(),
              "decision_bar": agent.DECISION_BAR, "lookback_days": agent.LOOKBACK_DAYS,
              "budget": float(budget), "seed": seed, "criteria": crit}
     return T.ledger_append(folder, entry)

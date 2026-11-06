@@ -45,12 +45,22 @@ def _load(path, name):
 
 T = _load(os.path.join(ROOT, "trader-training", "train.py"), "trader_train_agent")
 
-PROMPT_VERSION = "1"
+PROMPT_VERSION = "2"
 DECISION_BAR = 2          # the model decides once the day has this many bars; the order fills one bar later
 LOOKBACK_DAYS = 5
 MAX_REASON = 500
 API_URL = "https://api.anthropic.com/v1/messages"
 API_VERSION = "2023-06-01"
+
+# Request settings. Every listed model thinks before it answers (adaptive thinking is on by default and cannot be
+# switched off on all of them), and thinking tokens count against max_tokens and are billed as output. A small
+# max_tokens cuts the answer off before the JSON, so it is set high; the cost is only what is actually written.
+# Effort is fixed explicitly because its default differs between models (medium on Haiku 5.5 and Opus 5.5, high
+# on Sonnet 5.5 and Fable 5.1), which would make two models' runs differ in more than the model.
+# Source: the claude-api reference bundled with Claude Code, read 2026-11-06. No temperature is sent: current
+# models reject non-default sampling settings.
+MAX_TOKENS = 16000
+EFFORT = "medium"
 
 # US dollars per million tokens: (input, output). Only models listed here can be run, so spend can be counted.
 PRICES = {
@@ -75,8 +85,24 @@ class BudgetExceeded(RuntimeError):
     pass
 
 
+def request_settings():
+    return {"max_tokens": MAX_TOKENS, "effort": EFFORT, "api_version": API_VERSION}
+
+
+def _settings_text():
+    return json.dumps(request_settings(), sort_keys=True, separators=(",", ":"))
+
+
 def instructions_hash():
-    return hashlib.sha256((PROMPT_VERSION + "\n" + INSTRUCTIONS).encode("utf-8")).hexdigest()
+    """Hash of everything that shapes an answer besides the model and the bars: the instructions and the request
+    settings. A lock stores it, so changing any of them after a lock is refused."""
+    return hashlib.sha256((PROMPT_VERSION + "\n" + INSTRUCTIONS + "\n" + _settings_text()).encode("utf-8")).hexdigest()
+
+
+def worst_case_cost(model, prompt):
+    """The most one call can cost: every byte of the prompt as a token (a token is at least one byte in practice)
+    and an answer that uses all of max_tokens."""
+    return cost(model, {"input_tokens": len(prompt.encode("utf-8")), "output_tokens": MAX_TOKENS})
 
 
 def price_for(model):
@@ -172,15 +198,17 @@ def parse_answer(text):
 # ---------- the model behind the key ----------
 
 class AnthropicClient:
-    """Callable prompt -> (text, usage). The key is read once from the environment and kept private."""
+    """Callable prompt -> (text, usage, stop_reason). The key is read once from the environment and kept private."""
 
-    def __init__(self, model, max_tokens=300, timeout=90):
+    def __init__(self, model, max_tokens=None, effort=None, timeout=300):
         key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
         if not key:
             raise ValueError("ANTHROPIC_API_KEY is not set on this computer. Set it in your own terminal "
                              "(never paste it into a chat or a file) and run again.")
         price_for(model)
-        self.model, self.max_tokens, self.timeout = model, max_tokens, timeout
+        self.model, self.timeout = model, timeout
+        self.max_tokens = MAX_TOKENS if max_tokens is None else max_tokens
+        self.effort = EFFORT if effort is None else effort
         self._key = key
 
     def __repr__(self):
@@ -188,6 +216,7 @@ class AnthropicClient:
 
     def __call__(self, prompt):
         body = json.dumps({"model": self.model, "max_tokens": self.max_tokens,
+                           "output_config": {"effort": self.effort},
                            "messages": [{"role": "user", "content": prompt}]}).encode("utf-8")
         req = urllib.request.Request(API_URL, data=body, method="POST")
         req.add_header("x-api-key", self._key)
@@ -205,10 +234,11 @@ class AnthropicClient:
             raise ValueError(self._clean("Anthropic API error %s: %s" % (e.code, detail)))
         except (urllib.error.URLError, OSError) as e:
             raise ValueError(self._clean("could not reach the Anthropic API: %s" % e))
+        # Thinking blocks are skipped: only the text blocks hold the answer. Thinking is included in output_tokens.
         text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
         usage = data.get("usage") or {}
         return text, {"input_tokens": int(usage.get("input_tokens", 0)),
-                      "output_tokens": int(usage.get("output_tokens", 0))}
+                      "output_tokens": int(usage.get("output_tokens", 0))}, data.get("stop_reason")
 
     def _clean(self, s):
         return str(s).replace(self._key, "***")
@@ -239,16 +269,24 @@ def make_agent(folder, client, model, costs, budget, active_from):
     state = {"day": None, "pos": 0}
 
     def decide(prompt):
-        key = hashlib.sha256((model + "\n" + PROMPT_VERSION + "\n" + prompt).encode("utf-8")).hexdigest()
+        key = hashlib.sha256((model + "\n" + PROMPT_VERSION + "\n" + _settings_text() + "\n" + prompt)
+                             .encode("utf-8")).hexdigest()
         if key in cache:
             stats["cache_hits"] += 1
             return cache[key]
-        if stats["ledger_spent"] >= budget:
-            raise BudgetExceeded("budget of %.4f USD reached (%.4f spent); rerun with a higher budget to continue "
-                                 "from the saved decisions" % (budget, stats["ledger_spent"]))
-        spent, pos, reason, failed = 0.0, 0, "", True
+        worst = worst_case_cost(model, prompt)
+        spent, pos, reason, failed, stops = 0.0, 0, "", True, []
         for attempt in range(2):
-            text, usage = client(prompt)
+            # Checked before EVERY call against the most that call could cost, so the cap is never passed.
+            if stats["ledger_spent"] + spent + worst > budget:
+                if spent:
+                    break              # the first attempt is paid for: log it as a failed decision, then stop
+                raise BudgetExceeded("budget of %.4f USD reached (%.4f spent; one more call could cost up to "
+                                     "%.4f); rerun with a higher budget to continue from the saved decisions"
+                                     % (budget, stats["ledger_spent"], worst))
+            res = client(prompt)
+            text, usage = res[0], res[1]
+            stops.append(res[2] if len(res) > 2 else None)
             stats["calls"] += 1
             spent += cost(model, usage)
             try:
@@ -256,12 +294,12 @@ def make_agent(folder, client, model, costs, budget, active_from):
                 failed = False
                 break
             except ValueError as e:
-                reason = "unusable answer: %s" % e
+                reason = "unusable answer (stop reason %s): %s" % (stops[-1], e)
         if failed:
             pos = 0
         e = T.ledger_append(ledger, {"kind": "decision", "key": key, "position": pos, "reason": reason[:MAX_REASON],
                                      "failed": failed, "model": model, "prompt_version": PROMPT_VERSION,
-                                     "cost": spent})
+                                     "settings": request_settings(), "stop_reasons": stops, "cost": spent})
         cache[key] = e
         stats["spent"] += spent
         stats["ledger_spent"] += spent
