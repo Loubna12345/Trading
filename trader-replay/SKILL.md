@@ -18,7 +18,8 @@ tamper-evident record. It places no orders.
 python3 "${CLAUDE_SKILL_DIR}/replay.py" start trader/history/SAP.DE_60m.csv --dir trader/replay/a \
     --commission-bps 0 --spread-bps 2 --slippage-bps 1 --fixed-fee 0 --periods-per-year 2268
 python3 "${CLAUDE_SKILL_DIR}/replay.py" show --dir trader/replay/a --week 1
-python3 "${CLAUDE_SKILL_DIR}/replay.py" predict --dir trader/replay/a --week 2 --strategy trend --param window=6 --note "week 1 trended"
+python3 "${CLAUDE_SKILL_DIR}/replay.py" predict --dir trader/replay/a --week 2 --strategy trend --param window=6 \
+    --expect-return 0.004 --expect-market up --note "week 1 trended"
 python3 "${CLAUDE_SKILL_DIR}/replay.py" reveal --dir trader/replay/a --week 2
 python3 "${CLAUDE_SKILL_DIR}/replay.py" final --dir trader/replay/a --strategy trend --param window=6
 python3 "${CLAUDE_SKILL_DIR}/replay.py" status --dir trader/replay/a
@@ -32,10 +33,16 @@ python3 "${CLAUDE_SKILL_DIR}/replay.py" status --dir trader/replay/a
   prices; the data is re-read from the source file every time, and a changed source is refused.
 - `show` prints a week that has already been revealed (week 1 is free). `predict` writes the rule for the next
   week into the ledger (strategy from /trader-strategies, or `none` to stay out); one prediction per week, never
-  rewritten. `reveal` shows the week and scores the rule: same backtester, costs, one-bar delay and end-of-day
+  rewritten. Every prediction also carries two forecasts, required: the net return you expect from the rule that
+  week (`--expect-return 0.004` is +0.4%) and where the stock itself ends the week (`--expect-market up|down`).
+  `reveal` shows the week and scores the rule: same backtester, costs, one-bar delay and end-of-day
   flatten as the rest of the project; the result carries buy-and-hold for the same week.
 - Sealed weeks cannot be read or predicted. `final` runs one rule on all sealed weeks, once per rule, only for
   a rule that was written down for some week, and reports how many different rules were tried.
+
+- Each result stores the difference between forecast and actual (`error`, and whether the direction was right).
+  `status` sums it up: mean error, mean absolute error next to the error of always forecasting zero, direction
+  hits next to always-saying-up and a coin. A forecaster is only worth listening to if it beats those.
 
 ## Limits (read before trusting a result)
 

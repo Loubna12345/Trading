@@ -33,7 +33,7 @@ class Env(unittest.TestCase):
         return replay.start(**kw)
 
     def play_week(self, k, strategy="trend", params=None):
-        replay.predict(self.dir, k, strategy, params if params is not None else {"window": 3}, note="t")
+        replay.predict(self.dir, k, strategy, params if params is not None else {"window": 3}, expect_return=0.0, expect_market="up", note="t")
         return replay.reveal(self.dir, k)
 
 
@@ -154,33 +154,33 @@ class Order(Env):
 
     def test_prediction_must_be_for_the_next_unrevealed_week(self):
         with self.assertRaises(ValueError):
-            replay.predict(self.dir, 3, "trend", {"window": 3}, note="")
+            replay.predict(self.dir, 3, "trend", {"window": 3}, expect_return=0.0, expect_market="up", note="")
         with self.assertRaises(ValueError):
-            replay.predict(self.dir, 1, "trend", {"window": 3}, note="")
+            replay.predict(self.dir, 1, "trend", {"window": 3}, expect_return=0.0, expect_market="up", note="")
 
     def test_a_week_cannot_be_predicted_twice(self):
-        replay.predict(self.dir, 2, "trend", {"window": 3}, note="")
+        replay.predict(self.dir, 2, "trend", {"window": 3}, expect_return=0.0, expect_market="up", note="")
         with self.assertRaises(ValueError):
-            replay.predict(self.dir, 2, "orb", {"range_bars": 2}, note="")
+            replay.predict(self.dir, 2, "orb", {"range_bars": 2}, expect_return=0.0, expect_market="up", note="")
 
     def test_after_reveal_the_week_can_be_read_again_and_the_next_is_open_for_prediction(self):
         self.play_week(2)
         self.assertEqual(len(replay.show(self.dir, 2)), len(replay.show(self.dir, 1)))
-        replay.predict(self.dir, 3, "trend", {"window": 3}, note="")
+        replay.predict(self.dir, 3, "trend", {"window": 3}, expect_return=0.0, expect_market="up", note="")
 
     def test_unknown_strategy_or_missing_params_are_refused_and_not_logged(self):
         before = len(replay.T.ledger_read(self.dir))
         with self.assertRaises(ValueError):
-            replay.predict(self.dir, 2, "crystal-ball", {}, note="")
+            replay.predict(self.dir, 2, "crystal-ball", {}, expect_return=0.0, expect_market="up", note="")
         with self.assertRaises(ValueError):
-            replay.predict(self.dir, 2, "trend", {}, note="")
+            replay.predict(self.dir, 2, "trend", {}, expect_return=0.0, expect_market="up", note="")
         self.assertEqual(len(replay.T.ledger_read(self.dir)), before)
 
     def test_sealed_weeks_cannot_be_read_or_predicted(self):
         for k in range(2, 17):
             self.play_week(k)
         with self.assertRaises(ValueError):
-            replay.predict(self.dir, 17, "trend", {"window": 3}, note="")
+            replay.predict(self.dir, 17, "trend", {"window": 3}, expect_return=0.0, expect_market="up", note="")
         with self.assertRaises(ValueError):
             replay.show(self.dir, 17)
         with self.assertRaises(ValueError):
@@ -239,6 +239,59 @@ class Scoring(Env):
             replay.status(self.dir)
 
 
+class Forecast(Env):
+    def setUp(self):
+        super().setUp()
+        self.start()
+
+    def predict(self, k, er, em, strategy="trend", params=None):
+        return replay.predict(self.dir, k, strategy, params if params is not None else {"window": 3},
+                              expect_return=er, expect_market=em, note="")
+
+    def test_both_forecasts_are_required_and_checked_before_anything_is_logged(self):
+        before = len(replay.T.ledger_read(self.dir))
+        for er, em in ((None, "up"), ("0.01", "up"), (float("nan"), "up"), (2.5, "up"), (True, "up"),
+                       (0.01, None), (0.01, "sideways")):
+            with self.assertRaises(ValueError, msg=(er, em)):
+                self.predict(2, er, em)
+        self.assertEqual(len(replay.T.ledger_read(self.dir)), before)
+
+    def test_the_forecast_is_in_the_ledger_before_the_week_is_shown(self):
+        e = self.predict(2, 0.004, "down")
+        self.assertEqual((e["expect_return"], e["expect_market"]), (0.004, "down"))
+        self.assertNotIn("result", [x["kind"] for x in replay.T.ledger_read(self.dir)])
+
+    def test_the_result_stores_the_difference_between_forecast_and_actual(self):
+        self.predict(2, 0.004, "up")
+        res = replay.reveal(self.dir, 2)
+        self.assertEqual(res["expected_return"], 0.004)
+        self.assertAlmostEqual(res["error"], res["strategy_return"] - 0.004, places=12)
+        self.assertEqual(res["market_expected"], "up")
+        self.assertEqual(res["market_actual"], "up" if res["buy_and_hold_return"] > 0 else "down")
+        self.assertEqual(res["direction_hit"], res["market_actual"] == "up")
+        stored = [e for e in replay.T.ledger_read(self.dir) if e["kind"] == "result"][0]
+        self.assertEqual(stored["error"], res["error"])
+
+    def test_status_compares_the_forecasts_with_doing_nothing_and_with_always_up(self):
+        for k, (er, em) in zip(range(2, 7), [(0.01, "up"), (-0.01, "down"), (0.0, "up"), (0.02, "down"), (0.0, "up")]):
+            self.predict(k, er, em, "none", {})
+            replay.reveal(self.dir, k)
+        st = replay.status(self.dir)
+        f = st["forecast"]
+        self.assertEqual(f["weeks"], 5)
+        results = [e for e in replay.T.ledger_read(self.dir) if e["kind"] == "result"]
+        self.assertAlmostEqual(f["mean_abs_error"], sum(abs(e["error"]) for e in results) / 5, places=12)
+        self.assertAlmostEqual(f["mean_abs_error_if_always_zero"],
+                               sum(abs(e["strategy_return"]) for e in results) / 5, places=12)
+        self.assertAlmostEqual(f["mean_error"], sum(e["error"] for e in results) / 5, places=12)
+        self.assertEqual(f["direction_hits"], sum(1 for e in results if e["direction_hit"]))
+        self.assertEqual(f["always_up_hits"], sum(1 for e in results if e["market_actual"] == "up"))
+        self.assertTrue(0.0 < f["direction_p_value_vs_coin"] <= 1.0)
+
+    def test_status_with_no_scored_week_says_so(self):
+        self.assertEqual(replay.status(self.dir)["forecast"]["weeks"], 0)
+
+
 class Final(Env):
     def setUp(self):
         super().setUp()
@@ -288,7 +341,8 @@ class Cli(Env):
         self.assertEqual(code, 0, err)
         self.assertTrue(out.startswith("t,o,h,l,c,v"))
         code, out, err = self.run_cli("predict", "--dir", self.dir, "--week", "2", "--strategy", "trend",
-                                      "--param", "window=3", "--note", "momentum")
+                                      "--param", "window=3", "--expect-return", "0.004", "--expect-market", "up",
+                                      "--note", "momentum")
         self.assertEqual(code, 0, err)
         code, out, err = self.run_cli("reveal", "--dir", self.dir, "--week", "2")
         self.assertEqual(code, 0, err)

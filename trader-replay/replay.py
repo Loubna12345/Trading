@@ -21,7 +21,7 @@ rest of the market can still be recognised. Treat a replay result as practice, n
 Commands:
   start   SOURCE.csv --dir D --commission-bps B --spread-bps S --slippage-bps L --fixed-fee F --periods-per-year N
   show    --dir D --week K
-  predict --dir D --week K --strategy NAME --param key=value ... [--note TEXT]     (NAME may be `none`)
+  predict --dir D --week K --strategy NAME --param key=value ... --expect-return R --expect-market up|down\n          [--note TEXT]     (NAME may be `none`)
   reveal  --dir D --week K
   final   --dir D --strategy NAME --param key=value ...
   status  --dir D
@@ -196,10 +196,20 @@ def show(folder, week):
     return [dict(x) for x in blind[a:b]]
 
 
-def predict(folder, week, strategy, params, note=""):
+def _check_forecast(expect_return, expect_market):
+    if (isinstance(expect_return, bool) or not isinstance(expect_return, (int, float))
+            or not math.isfinite(expect_return) or abs(expect_return) > 1.0):
+        raise ValueError("expect_return must be the week's net return you expect for this rule, as a fraction "
+                         "(0.004 means +0.4%), between -1 and 1")
+    if expect_market not in ("up", "down"):
+        raise ValueError("expect_market must be 'up' or 'down': where the stock itself (buy and hold) ends the week")
+
+
+def predict(folder, week, strategy, params, expect_return, expect_market, note=""):
     plan, blind, weeks, entries = _open(folder)
     st = _state(plan, entries)
     _check_params(params)
+    _check_forecast(expect_return, expect_market)
     if week > st["open"] and isinstance(week, int) and week <= plan["weeks"]:
         raise ValueError("week %d is sealed; only `final` may touch the sealed weeks" % week)
     if week != st["revealed"] + 1 or week > st["open"]:
@@ -208,7 +218,9 @@ def predict(folder, week, strategy, params, note=""):
         raise ValueError("week %d already has a prediction; it cannot be rewritten" % week)
     _fn(strategy, params)          # refuses unknown rules and missing parameters before anything is logged
     return T.ledger_append(folder, {"kind": "prediction", "week": week, "strategy": strategy, "params": params,
-                                    "rule": _rule_key(strategy, params), "note": str(note)[:1000]})
+                                    "rule": _rule_key(strategy, params),
+                                    "expect_return": expect_return, "expect_market": expect_market,
+                                    "note": str(note)[:1000]})
 
 
 def _score(plan, blind, a, b, strategy, params):
@@ -238,7 +250,12 @@ def reveal(folder, week):
         raise ValueError("write the rule for week %d first (predict); the ledger must hold it before the reveal" % week)
     a, b = weeks[week - 1]
     res = _score(plan, blind, a, b, pred[0]["strategy"], pred[0]["params"])
-    res.update({"week": week, "kind": "result", "rule": pred[0]["rule"]})
+    actual_market = "up" if res["buy_and_hold_return"] > 0 else "down"
+    res.update({"week": week, "kind": "result", "rule": pred[0]["rule"],
+                "expected_return": pred[0]["expect_return"],
+                "error": res["strategy_return"] - pred[0]["expect_return"],
+                "market_expected": pred[0]["expect_market"], "market_actual": actual_market,
+                "direction_hit": pred[0]["expect_market"] == actual_market})
     T.ledger_append(folder, res)
     return res
 
@@ -267,7 +284,20 @@ def status(folder):
     for e in st["results"]:
         total *= 1.0 + e["strategy_return"]
         bh *= 1.0 + e["buy_and_hold_return"]
-    return {"weeks_total": plan["weeks"], "weeks_open": st["open"], "weeks_sealed": plan["sealed_weeks"],
+    n = len(st["results"])
+    hits = sum(1 for e in st["results"] if e["direction_hit"])
+    forecast = {"weeks": n}
+    if n:
+        forecast.update({
+            "mean_error": sum(e["error"] for e in st["results"]) / n,
+            "mean_abs_error": sum(abs(e["error"]) for e in st["results"]) / n,
+            "mean_abs_error_if_always_zero": sum(abs(e["strategy_return"]) for e in st["results"]) / n,
+            "direction_hits": hits,
+            "always_up_hits": sum(1 for e in st["results"] if e["market_actual"] == "up"),
+            "direction_p_value_vs_coin": T.binom_tail(n, hits, 0.5),
+            "note": "A forecast only has value if its error is clearly below the always-zero error and its hits "
+                    "clearly beat both a coin and always saying up; with few weeks neither can be told apart."})
+    return {"forecast": forecast, "weeks_total": plan["weeks"], "weeks_open": st["open"], "weeks_sealed": plan["sealed_weeks"],
             "revealed_through": st["revealed"], "predictions": len(st["predictions"]),
             "rules_tried": len({e["rule"] for e in st["predictions"]}),
             "weeks_scored": len(st["results"]), "strategy_total_return": total - 1.0,
@@ -320,6 +350,10 @@ def main(argv=None):
     x.add_argument("--week", type=int, required=True)
     x.add_argument("--strategy", required=True)
     x.add_argument("--param", action="append")
+    x.add_argument("--expect-return", type=float, required=True,
+                   help="net return you expect from this rule this week, as a fraction (0.004 = +0.4%%)")
+    x.add_argument("--expect-market", choices=("up", "down"), required=True,
+                   help="where the stock itself ends the week")
     x.add_argument("--note", default="")
     x = sub.add_parser("final")
     x.add_argument("--dir", required=True)
@@ -337,7 +371,7 @@ def main(argv=None):
         elif a.cmd == "show":
             print(_csv(show(a.dir, a.week)))
         elif a.cmd == "predict":
-            e = predict(a.dir, a.week, a.strategy, _params(a.param), a.note)
+            e = predict(a.dir, a.week, a.strategy, _params(a.param), a.expect_return, a.expect_market, a.note)
             print(json.dumps({"logged": e["n"], "week": e["week"], "rule": e["rule"]}, indent=2))
         elif a.cmd == "reveal":
             res = reveal(a.dir, a.week)
