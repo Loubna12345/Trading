@@ -212,3 +212,39 @@ class Render(Played):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Money(Played):
+    def test_money_follows_the_compounded_result_from_the_start_amount(self):
+        d = self.data()
+        m = report.money(self.dir, d, 500.0)
+        self.assertAlmostEqual(m["rules_end"], 500.0 * (1.0 + d["rules_total"]), places=9)
+        self.assertAlmostEqual(m["stock_end"], 500.0 * (1.0 + d["stock_total"]), places=9)
+
+    def test_costs_in_money_are_summed_along_the_real_path(self):
+        d = self.data()
+        plan, blind, weeks, _ = replay._open(self.dir)
+        value, paid = 500.0, 0.0
+        for w in d["weeks"]:
+            a, b = weeks[w["week"] - 1]
+            s = replay._score(plan, blind, a, b, w["strategy"], w["params"])
+            paid += value * s["costs_paid"] / s["start_equity"]
+            value *= 1.0 + s["strategy_return"]
+        m = report.money(self.dir, d, 500.0)
+        self.assertAlmostEqual(m["rules_costs"], paid, places=9)
+        self.assertGreater(m["rules_costs"], 0.0)
+
+    def test_a_fixed_fee_is_refused_because_money_would_not_scale(self):
+        d = self.data()
+        with self.assertRaisesRegex(ValueError, "fixed fee"):
+            report.money(self.dir, dict(d, costs=dict(d["costs"], fixed_fee=1.0)), 500.0)
+
+    def test_the_page_shows_start_and_end_money(self):
+        d = self.data()
+        page = report.render(d, start_money=report.money(self.dir, d, 500.0))
+        self.assertIn("€500.00", page)
+        self.assertIn(report.eur(500.0 * (1.0 + d["rules_total"])), page)
+        self.assertIn("Your money", page)
+
+    def test_without_start_money_the_page_has_no_money_section(self):
+        self.assertNotIn("Your money", report.render(self.data()))

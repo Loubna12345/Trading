@@ -273,7 +273,8 @@ def _score_fn(plan, blind, a, b, fn):
             paid += f["cost"] + f["qty"] * abs(f["price"] - ref)
     bh = engine.buy_and_hold(blind[a:b], costs, capital=CAPITAL)
     return {"strategy_return": eq[b - 1] / start_eq - 1.0, "buy_and_hold_return": bh["equity"][-1] / CAPITAL - 1.0,
-            "trades": sum(1 for t in run["trades"] if t["exit_t"] >= t0), "costs_paid": paid, "bars": b - a}
+            "trades": sum(1 for t in run["trades"] if t["exit_t"] >= t0), "costs_paid": paid, "bars": b - a,
+            "start_equity": start_eq}
 
 
 def reveal(folder, week):

@@ -310,3 +310,24 @@ class Pages(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Money(Pages):
+    def test_agent_money_follows_its_result_from_500(self):
+        d = weekly.build(self.dir)
+        m = weekly.agent_money(self.dir, d, 500.0)
+        self.assertAlmostEqual(m["agent_end"], 500.0 * (1.0 + d["agent_total"]), places=9)
+        self.assertGreater(m["agent_costs"], 0.0)
+        page = weekly.render_agent(d, start_money=m)
+        self.assertIn("Your money", page)
+        self.assertIn(weekly.report.eur(m["agent_end"]), page)
+
+    def test_comparison_money_for_every_arm_over_the_same_weeks(self):
+        c = weekly.compare_build(self.dir, self.hand_run(weeks=(2, 3, 4, 5)), start_money=500.0)
+        m = c["money"]
+        self.assertAlmostEqual(m["agent_end"], 500.0 * (1.0 + c["agent_total"]), places=9)
+        self.assertAlmostEqual(m["rules_end"], 500.0 * (1.0 + c["rules_total"]), places=9)   # weeks 2-4 only
+        self.assertAlmostEqual(m["stock_end"], 500.0 * (1.0 + c["stock_total"]), places=9)
+        page = weekly.render_compare(c)
+        for v in (m["agent_end"], m["rules_end"], m["stock_end"]):
+            self.assertIn(weekly.report.eur(v), page)

@@ -147,6 +147,55 @@ def _rescore(plan, blind, weeks, rows, costs):
     return total - 1.0
 
 
+def eur(x):
+    return ("€{:,.2f}".format(x)).replace("€-", "−€")
+
+
+def check_start_money(costs, start):
+    if isinstance(start, bool) or not isinstance(start, (int, float)) or not math.isfinite(start) or start <= 0:
+        raise ValueError("the starting money must be a positive amount")
+    if costs["fixed_fee"]:
+        raise ValueError("with a fixed fee per trade the result depends on the account size, so it cannot be "
+                         "scaled to %s; re-score with that account size instead" % eur(start))
+
+
+def money_path(plan, blind, weeks, rows, start, fn_for_row):
+    """(end value, costs paid) for `start` money following the weekly results in order. Every cost is a share of
+    the trade (no fixed fee), so each week's costs are that week's share of its starting value."""
+    value, paid = float(start), 0.0
+    for r in rows:
+        a, b = weeks[r["week"] - 1]
+        s = replay._score_fn(plan, blind, a, b, fn_for_row(r))
+        paid += value * s["costs_paid"] / s["start_equity"]
+        value *= 1.0 + s["strategy_return"]
+    return value, paid
+
+
+def money(folder, d, start):
+    """Money for the rules run and for holding, starting from `start` (euro)."""
+    check_start_money(d["costs"], start)
+    plan, blind, weeks, _ = replay._open(folder)
+    end, paid = money_path(plan, blind, weeks, d["weeks"], start,
+                           lambda r: replay._fn(r["strategy"], r["params"]))
+    return {"start": float(start), "rules_end": end, "rules_costs": paid,
+            "stock_end": start * (1.0 + d["stock_total"]),
+            "hold_costs": start * 2 * per_side_bps(d["costs"]) / 1e4}
+
+
+def money_table(rows, start):
+    """rows: [(name, end value, costs paid or None, note)] -> the 'Your money' section."""
+    out = ["<h2>Your money</h2><p>Starting with %s in each case. Results after costs; amounts in euro.</p>"
+           "<div class=\"scroll\"><table><tr><th class=\"l\"></th><th>Start</th><th>End</th><th>Gain or loss</th>"
+           "<th>Costs paid</th></tr>" % eur(start)]
+    for name, end, paid, note in rows:
+        out.append("<tr><td class=\"l\">%s</td><td>%s</td><td><b>%s</b></td><td>%s</td><td>%s</td></tr>" % (
+            html.escape(name), eur(start), eur(end), eur(end - start),
+            html.escape(note) if paid is None else eur(paid)))
+    out.append("</table></div><p class=\"sub\">Fractional shares are assumed, so the whole amount is invested on a "
+               "held day. With only percentage costs, every result scales exactly with the amount.</p>")
+    return "".join(out)
+
+
 def pct(x, signed=True, digits=1):
     if round(x * 100, digits) == 0:
         x = 0.0
@@ -362,7 +411,7 @@ def _row(w):
                 html.escape(w["note"])))
 
 
-def render(d, label="", cost_note=""):
+def render(d, label="", cost_note="", start_money=None):
     n = len(d["weeks"])
     f = d["forecast"]
     cum = {"weeks": [w["week"] for w in d["weeks"]], "rules": [pct(v) for v in d["cum_rules"]],
@@ -382,6 +431,12 @@ def render(d, label="", cost_note=""):
                  "style=\"background:var(--c-stock)\"></i>Holding the stock</span></div><div class=\"tile\"><b>0.0%%</b>"
                  "<span>Staying out of the market</span></div></div>" % (pct(d["rules_total"]), pct(d["stock_total"])))
     parts.append("<h2>What it says</h2><ul>%s</ul>" % "".join("<li>%s</li>" % html.escape(s) for s in verdict(d)))
+    if start_money:
+        m = start_money
+        parts.append(money_table([("My rules", m["rules_end"], m["rules_costs"], ""),
+                                  ("Holding the stock", m["stock_end"], None,
+                                   "about %s for one buy and one sell, not counted" % eur(m["hold_costs"])),
+                                  ("Staying out", m["start"], 0.0, "")], m["start"]))
     parts.append("<h2>Cumulative result</h2><div class=\"legend\"><span><i class=\"sw\" style=\"background:var(--c-rules)\">"
                  "</i>My rules, after costs</span><span><i class=\"sw\" style=\"background:var(--c-stock)\"></i>Holding "
                  "the stock</span></div>%s<div id=\"tip\"></div><script type=\"application/json\" id=\"cumdata\">%s</script>"
@@ -440,8 +495,10 @@ def render(d, label="", cost_note=""):
     return "".join(parts)
 
 
-def write(folder, out, label="", cost_note=""):
-    page = render(build(folder), label=label, cost_note=cost_note)
+def write(folder, out, label="", cost_note="", start_money=None):
+    d = build(folder)
+    m = money(folder, d, start_money) if start_money else None
+    page = render(d, label=label, cost_note=cost_note, start_money=m)
     with open(out, "w", encoding="utf-8") as fh:
         fh.write(page)
     return out
@@ -453,9 +510,10 @@ def main(argv=None):
     p.add_argument("--out", required=True)
     p.add_argument("--label", default="")
     p.add_argument("--cost-note", default="", help="plain text shown under the cost table, e.g. what the broker charges")
+    p.add_argument("--start-money", type=float, help="starting amount in euro, e.g. 500; shows what it becomes")
     a = p.parse_args(argv)
     try:
-        write(a.dir, a.out, a.label, a.cost_note)
+        write(a.dir, a.out, a.label, a.cost_note, a.start_money)
     except ValueError as e:
         print("Refused: %s" % e, file=sys.stderr)
         return 2

@@ -511,6 +511,17 @@ def _rescore_agent(plan, blind, weeks, rows, costs):
     return total - 1.0
 
 
+def agent_money(folder, d, start):
+    """Money for the agent run and for holding, starting from `start` (euro), along the real path."""
+    report.check_start_money(d["costs"], start)
+    plan, blind, weeks, _ = replay._open(folder)
+    end, paid = report.money_path(plan, blind, weeks, d["rows"], start, lambda r: _positions_strategy(
+        {x["decided_at"]: x["position"] for x in r["days"] if x.get("position") is not None}))
+    return {"start": float(start), "agent_end": end, "agent_costs": paid,
+            "stock_end": start * (1.0 + d["stock_total"]),
+            "hold_costs": start * 2 * report.per_side_bps(d["costs"]) / 1e4}
+
+
 def build(folder):
     plan, blind, weeks, entries = replay._open(folder)
     lk = _lock(entries)
@@ -705,7 +716,7 @@ def agent_sentences(d):
     return out
 
 
-def render_agent(d, label=""):
+def render_agent(d, label="", start_money=None):
     lk, rows = d["lock"], d["rows"]
     p = [_head("Agent replay"), "<h1>Agent replay</h1>",
          "<p class=\"sub\">The agent traded weeks %d to %d one day at a time, stock and dates hidden, learning only "
@@ -719,6 +730,12 @@ def render_agent(d, label=""):
         _tile("0.0%", "Staying out of the market"),
         _tile("$%.2f" % d["spent"], "API spend (model %s)" % lk["model"])))
     p.append("<h2>What it says</h2><ul>%s</ul>" % "".join("<li>%s</li>" % html.escape(s) for s in agent_sentences(d)))
+    if start_money:
+        m = start_money
+        p.append(report.money_table([("The agent", m["agent_end"], m["agent_costs"], ""),
+                                     ("Holding the stock", m["stock_end"], None,
+                                      "about %s for one buy and one sell, not counted" % report.eur(m["hold_costs"])),
+                                     ("Staying out", m["start"], 0.0, "")], m["start"]))
     p.append("<h2>Cumulative result</h2>%s<p class=\"sub\">Holding is the true move of the stock including overnight "
              "gaps.</p>" % lines_chart([r["week"] for r in rows], [("Agent", "agent", d["cum"]),
                                                                   ("Stock", "stock", d["cum_stock"])]))
@@ -769,7 +786,7 @@ def render_agent(d, label=""):
 SAME_KEYS = ("source_sha256", "costs", "days_per_week", "holdout", "weeks", "sealed_weeks")
 
 
-def compare_build(agent_folder, rules_folder):
+def compare_build(agent_folder, rules_folder, start_money=None):
     d = build(agent_folder)
     aplan, blind, weeks, _ = replay._open(agent_folder)
     rplan, _, _, rentries = replay._open(rules_folder)
@@ -820,7 +837,17 @@ def compare_build(agent_folder, rules_folder):
     for x in rsens:
         rules_sens[x["label"]] = x["total_return"]
     n = len(rows)
-    return {"rows": rows, "tests": tests, "criteria": crit, "agent": d, "n": n,
+    money = None
+    if start_money:
+        am = agent_money(agent_folder, d, start_money)
+        rd = report.build(rules_folder)
+        wanted = {x["week"] for x in rows}
+        r_end, r_paid = report.money_path(rplan, blind, weeks, [w for w in rd["weeks"] if w["week"] in wanted],
+                                          start_money, lambda r: replay._fn(r["strategy"], r["params"]))
+        money = {"start": float(start_money), "agent_end": am["agent_end"], "agent_costs": am["agent_costs"],
+                 "rules_end": r_end, "rules_costs": r_paid, "stock_end": start_money * (1.0 + rows[-1]["cum_stock"]),
+                 "hold_costs": am["hold_costs"]}
+    return {"rows": rows, "tests": tests, "criteria": crit, "agent": d, "n": n, "money": money,
             "agent_total": rows[-1]["cum_agent"], "rules_total": rows[-1]["cum_rules"],
             "stock_total": rows[-1]["cum_stock"],
             "agent_hits": sum(1 for x in rows if x["agent_hit"]), "rules_hits": sum(1 for x in rows if x["rules_hit"]),
@@ -846,6 +873,13 @@ def render_compare(c, label=""):
         _tile(report.pct(c["rules_total"]), "The rules, after costs", "--c-rules"),
         _tile(report.pct(c["stock_total"]), "Holding the stock", "--c-stock"),
         _tile("0.0%", "Staying out")))
+    if c.get("money"):
+        m = c["money"]
+        p.append(report.money_table([("The agent", m["agent_end"], m["agent_costs"], ""),
+                                     ("The rules", m["rules_end"], m["rules_costs"], ""),
+                                     ("Holding the stock", m["stock_end"], None,
+                                      "about %s for one buy and one sell, not counted" % report.eur(m["hold_costs"])),
+                                     ("Staying out", m["start"], 0.0, "")], m["start"]))
     p.append("<h2>The verdict, by criteria locked before the run</h2><p>Each pair is judged on the weekly results: a "
              "paired bootstrap must give p below %g, the gap must be at least %s, the winner must have made money "
              "after costs, and there must be at least %d weeks. Otherwise: no clear difference.</p>"
