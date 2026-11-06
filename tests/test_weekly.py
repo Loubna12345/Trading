@@ -24,13 +24,13 @@ class Fake:
         self.day, self.week_text, self.calls = day, week_text, []
 
     def __call__(self, prompt):
-        if prompt.startswith(weekly.WEEK_INSTRUCTIONS):
+        if prompt.startswith((weekly.WEEK_INSTRUCTIONS, weekly.WEEK_INSTRUCTIONS_OVERNIGHT)):
             w = int(re.search(r"Now write your forecast for week (\d+)", prompt).group(1))
             self.calls.append(("week", w, prompt))
             text = self.week_text(w) if self.week_text else json.dumps(
                 {"expect_return": 0.001, "expect_market": "up", "plan": "plan %d" % w, "notebook": "NB-%d" % w})
             return text, dict(USAGE), "end_turn"
-        assert prompt.startswith(weekly.DAY_INSTRUCTIONS), prompt[:80]
+        assert prompt.startswith((weekly.DAY_INSTRUCTIONS, weekly.DAY_INSTRUCTIONS_OVERNIGHT)), prompt[:80]
         self.calls.append(("day", None, prompt))
         return json.dumps({"position": self.day(prompt), "reason": "because"}), dict(USAGE), "end_turn"
 
@@ -306,6 +306,74 @@ class Pages(Base):
             with redirect_stdout(io.StringIO()):
                 self.assertEqual(weekly.main(args), 0, args)
         self.assertTrue(os.path.exists(os.path.join(self.root, "c.html")))
+
+
+class Overnight(Base):
+    def run_overnight(self, day=lambda p: 1):
+        self.lock(overnight=True)
+        fake = Fake(day=day)
+        weekly.run(self.dir, fake)
+        return fake, sorted(self.entries("agent_week_result"), key=lambda e: e["week"])
+
+    def test_the_mode_is_locked_and_changes_the_context(self):
+        e = self.lock(overnight=True)
+        self.assertTrue(e["overnight"])
+        self.assertEqual(e["context_hash"], weekly.context_hash(True))
+        self.assertNotEqual(weekly.context_hash(True), weekly.context_hash())
+
+    def test_a_normal_lock_keeps_the_old_context_so_old_runs_still_continue(self):
+        e = self.lock()
+        self.assertFalse(e["overnight"])
+        self.assertEqual(e["context_hash"], weekly.context_hash())
+
+    def test_always_holding_buys_once_and_keeps_the_stock_overnight_and_over_weekends(self):
+        fake, rows = self.run_overnight()
+        self.assertEqual(sum(r["trades"] for r in rows), 0)          # bought once, never sold
+        self.assertGreater(rows[0]["costs_paid"], 0.0)
+        for r in rows[1:]:
+            self.assertEqual(r["costs_paid"], 0.0)
+            self.assertAlmostEqual(r["strategy_return"], r["stock_move"], places=9)   # the whole move, gaps too
+
+    def test_the_model_is_told_the_rules_and_what_it_holds(self):
+        fake, rows = self.run_overnight()
+        days = [p for kind, _, p in fake.calls if kind == "day"]
+        self.assertTrue(all(p.startswith(weekly.DAY_INSTRUCTIONS_OVERNIGHT) for p in days))
+        self.assertIn("You are in cash now.", days[0])
+        self.assertIn("You hold the stock now", days[1])
+        weeks = [p for kind, _, p in fake.calls if kind == "week"]
+        self.assertTrue(all(p.startswith(weekly.WEEK_INSTRUCTIONS_OVERNIGHT) for p in weeks))
+        self.assertIn("to your next decision", weeks[-1])
+
+    def test_costs_only_when_the_position_changes(self):
+        fake, rows = self.run_overnight(day=lambda p: len(p) % 2)
+        for r in rows:
+            for d in r["days"]:
+                if d.get("position") is None:
+                    continue
+                if d["position"] == d["kept_from_before"]:
+                    self.assertAlmostEqual(d["result_bps"], d["move_bps"] if d["position"] else 0.0, places=9)
+
+    def test_rescoring_and_money_follow_the_real_path(self):
+        fake, rows = self.run_overnight(day=lambda p: len(p) % 2)
+        plan, blind, weeks, _ = replay._open(self.dir)
+        total = 1.0
+        for r in rows:
+            total *= 1.0 + r["strategy_return"]
+        self.assertAlmostEqual(weekly._rescore_agent(plan, blind, weeks, rows, plan["costs"], True), total - 1.0,
+                               places=12)
+        d = weekly.build(self.dir)
+        self.assertAlmostEqual(d["agent_total"], total - 1.0, places=12)
+        m = weekly.agent_money(self.dir, d, 500.0)
+        self.assertAlmostEqual(m["agent_end"], 500.0 * total, places=9)
+        self.assertIn("overnight", weekly.render_agent(d, start_money=m))
+
+    def test_command_line_lock(self):
+        import io
+        from contextlib import redirect_stdout
+        with redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(weekly.main(["lock", "--dir", self.dir, "--model", MODEL, "--budget-usd", "1",
+                                          "--last-week", "4", "--overnight"]), 0)
+        self.assertIn('"overnight": true', out.getvalue())
 
 
 if __name__ == "__main__":

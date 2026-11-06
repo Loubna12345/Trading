@@ -258,10 +258,12 @@ def _score(plan, blind, a, b, strategy, params):
     return _score_fn(plan, blind, a, b, _fn(strategy, params))
 
 
-def _score_fn(plan, blind, a, b, fn):
-    """Score any decision function (hist, position) -> 0/1 on bars a..b the same way a rule is scored."""
+def _score_fn(plan, blind, a, b, fn, flatten_eod=True):
+    """Score any decision function (hist, position) -> 0/1 on bars a..b the same way a rule is scored. With
+    flatten_eod=False a position may be held overnight and into the week (it is then part of the starting value
+    eq[a-1]); a position still open at bar b-1 is marked at its close, its sell cost not yet charged."""
     costs = plan["costs"]
-    run = engine.backtest(blind[:b], fn, costs, capital=CAPITAL, flatten_eod=True)
+    run = engine.backtest(blind[:b], fn, costs, capital=CAPITAL, flatten_eod=flatten_eod)
     eq = run["equity"]
     start_eq = eq[a - 1] if a > 0 else CAPITAL
     t0 = blind[a]["t"]

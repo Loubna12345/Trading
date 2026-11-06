@@ -75,6 +75,51 @@ class Archive(Base):
         self.assertIn(weekly.report.eur(a["end_money"]), page)
         self.assertEqual(len(replay.T.ledger_read(self.reports)), 2)
 
+    def stopped_run(self):
+        """An agent run that stopped after week 2 of 2..4 (as if the network went down)."""
+        folder = os.path.join(self.root, "stopped")
+        replay.start(source=self.csv, folder=folder, costs=COSTS, periods_per_year=self.PPY,
+                     days_per_week=WEEKS_DAYS, holdout=0.34)
+        weekly.lock(folder=folder, model="claude-haiku-5-5", budget=50.0,
+                    first_week=2, last_week=4)
+        fake = Fake()
+
+        def client(prompt):
+            if "forecast for week 3" in prompt:
+                raise ValueError("could not reach the Anthropic API: timed out")
+            return fake(prompt)
+        with self.assertRaises(ValueError):
+            weekly.run(folder, client)
+        return folder
+
+    def test_a_run_that_stopped_early_is_refused_unless_saved_as_partial(self):
+        folder = self.stopped_run()
+        with self.assertRaisesRegex(ValueError, "only 1 of 3 weeks"):
+            archive.save_agent(self.reports, folder, 500.0)
+        with self.assertRaisesRegex(ValueError, "only 1 of 3 weeks"):
+            archive.save_comparison(self.reports, folder, self.hand, 500.0)
+        self.assertFalse(os.path.exists(os.path.join(self.reports, "agent-run-01.html")))
+        e = archive.save_agent(self.reports, folder, 500.0, partial=True)
+        self.assertFalse(e["complete"])
+        with open(os.path.join(self.reports, "index.html")) as fh:
+            self.assertIn("PARTIAL: 1 of 3 weeks", fh.read())
+
+    def test_a_note_marks_a_saved_report_without_changing_it(self):
+        r = archive.save_rules(self.reports, self.hand, 500.0)
+        path = os.path.join(self.reports, r["file"])
+        with open(path, "rb") as fh:
+            before = fh.read()
+        archive.add_note(self.reports, r["file"], "made too early")
+        with open(path, "rb") as fh:
+            self.assertEqual(fh.read(), before)
+        with open(os.path.join(self.reports, "index.html")) as fh:
+            self.assertIn("made too early", fh.read())
+        with self.assertRaisesRegex(ValueError, "no saved report"):
+            archive.add_note(self.reports, "agent-run-09.html", "x")
+        # numbering is not disturbed by notes
+        self.play_hand(5)
+        self.assertEqual(archive.save_rules(self.reports, self.hand, 500.0)["file"], "rules-run-02.html")
+
     def test_command_line(self):
         for args in (["rules", "--dir", self.hand, "--reports", self.reports, "--start-money", "500"],
                      ["agent", "--dir", self.dir, "--reports", self.reports, "--start-money", "500"],

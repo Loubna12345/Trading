@@ -14,7 +14,10 @@ is rebuilt from the ledger after every save.
     python3 archive.py rules   --dir REPLAY --reports R --start-money 500 [--label TEXT]
     python3 archive.py agent   --dir AGENT  --reports R --start-money 500 [--label TEXT]
     python3 archive.py compare --dir AGENT --rules-dir REPLAY --reports R --start-money 500 [--label TEXT]
+    python3 archive.py note    --reports R --file agent-run-02.html --text "made before the run had finished"
     python3 archive.py index   --reports R
+
+An agent run that has not reached its last locked week is refused unless --partial is given.
 """
 
 import argparse
@@ -92,8 +95,19 @@ def save_rules(reports, folder, start_money, label=""):
         "direction_hits": f.get("direction_hits"), "rules_tried": d["rules_tried"]})
 
 
-def save_agent(reports, folder, start_money, label=""):
+def _check_complete(d, partial):
+    """An agent run that stopped early (network, budget) is refused unless saved on purpose as partial."""
+    lk = d["lock"]
+    planned = lk["last_week"] - lk["first_week"] + 1
+    if d["n"] < planned and not partial:
+        raise ValueError("the agent run has only %d of %d weeks; finish it with `weekly.py run`, or save it on purpose "
+                         "with --partial" % (d["n"], planned))
+    return d["n"] >= planned, planned
+
+
+def save_agent(reports, folder, start_money, label="", partial=False):
     d = weekly.build(folder)
+    complete, planned = _check_complete(d, partial)
     m = weekly.agent_money(folder, d, start_money)
     src, state = _state(folder)
     page = weekly.render_agent(d, label=label, start_money=m)
@@ -104,10 +118,12 @@ def save_agent(reports, folder, start_money, label=""):
         "weeks": [rows[0]["week"], rows[-1]["week"]], "n_weeks": d["n"], "total_return": d["agent_total"],
         "stock_return": d["stock_total"], "start_money": m["start"], "end_money": m["agent_end"],
         "costs_money": m["agent_costs"], "stock_end_money": m["stock_end"],
-        "direction_hits": d["forecast"]["direction_hits"], "api_spent": d["spent"]})
+        "direction_hits": d["forecast"]["direction_hits"], "api_spent": d["spent"], "complete": complete,
+        "planned_weeks": planned})
 
 
-def save_comparison(reports, agent_folder, rules_folder, start_money, label=""):
+def save_comparison(reports, agent_folder, rules_folder, start_money, label="", partial=False):
+    complete, planned = _check_complete(weekly.build(agent_folder), partial)
     c = weekly.compare_build(agent_folder, rules_folder, start_money=start_money)
     a_src, a_state = _state(agent_folder)
     r_src, r_state = _state(rules_folder)
@@ -123,13 +139,34 @@ def save_comparison(reports, agent_folder, rules_folder, start_money, label=""):
         "n_weeks": c["n"], "total_return": c["agent_total"], "rules_return": c["rules_total"],
         "stock_return": c["stock_total"], "start_money": m["start"], "end_money": m["agent_end"],
         "rules_end_money": m["rules_end"], "stock_end_money": m["stock_end"],
-        "verdicts": [{"against": t["against"], "verdict": t["verdict"]} for t in c["tests"]]})
+        "verdicts": [{"against": t["against"], "verdict": t["verdict"]} for t in c["tests"]], "complete": complete,
+        "planned_weeks": planned})
+
+
+def add_note(reports, file, text):
+    """A note on a saved report (for example: made from a run that had stopped early). The report is not changed;
+    the note is a new ledger entry and shows on the overview."""
+    saved = _saved(reports)
+    if saved:
+        T.ledger_verify(reports)
+    if not any(e.get("file") == file for e in saved if e["kind"] in PREFIX):
+        raise ValueError("no saved report is called %s" % file)
+    if not text.strip():
+        raise ValueError("the note is empty")
+    e = T.ledger_append(reports, {"kind": "note", "file": file, "text": text.strip(),
+                                  "saved": time.strftime("%Y-%m-%d %H:%M")})
+    write_index(reports)
+    return e
 
 
 # ---------- the overview ----------
 
 def write_index(reports):
     saved = _saved(reports)
+    notes = {}
+    for e in saved:
+        if e["kind"] == "note":
+            notes.setdefault(e["file"], []).append(e["text"])
     eur, pct = report.eur, report.pct
     p = [weekly._head("Training runs"), "<h1>Training runs</h1>",
          "<p class=\"sub\">Every saved report, oldest first. Files are numbered per kind and never overwritten. "
@@ -150,13 +187,17 @@ def write_index(reports):
                 extra = e.get("label") or ""
                 money = "%s → %s" % (eur(e["start_money"]), eur(e["end_money"]))
                 result = pct(e["total_return"])
+            if e.get("complete") is False:
+                extra += " [PARTIAL: %d of %d weeks]" % (e["n_weeks"], e["planned_weeks"])
+            for t in notes.get(e["file"], []):
+                extra += " Note: " + t
             p.append("<tr><td class=\"l\"><a href=\"%s\">%s %d</a></td><td class=\"l\">%s</td><td class=\"l\">%s</td>"
                      "<td>%d–%d</td><td>%s</td><td>%s</td><td>%s</td><td class=\"note\">%s</td></tr>" % (
                          html.escape(e["file"]), TITLE[kind], e["number"], html.escape(e["saved"]),
                          html.escape(e["who"]), e["weeks"][0], e["weeks"][1], html.escape(result), html.escape(money),
                          pct(e["stock_return"]), html.escape(extra)))
         p.append("</table></div>")
-    agents = [e for e in saved if e["kind"] == "agent"]
+    agents = [e for e in saved if e["kind"] == "agent" and e.get("complete") is not False]
     if len(agents) > 1:
         p.append("<h2>Is the agent getting better?</h2><p>Agent runs in order: %s. A rising line over runs on the "
                  "SAME weeks means little (the notebook may have learned those weeks); it counts on new stocks or new "
@@ -182,6 +223,12 @@ def main(argv=None):
         x.add_argument("--reports", required=True)
         x.add_argument("--start-money", type=float, required=True, help="starting amount in euro, e.g. 500")
         x.add_argument("--label", default="")
+        if name != "rules":
+            x.add_argument("--partial", action="store_true", help="save an agent run that has not finished")
+    x = sub.add_parser("note")
+    x.add_argument("--reports", required=True)
+    x.add_argument("--file", required=True)
+    x.add_argument("--text", required=True)
     x = sub.add_parser("index")
     x.add_argument("--reports", required=True)
     a = ap.parse_args(argv)
@@ -189,9 +236,13 @@ def main(argv=None):
         if a.cmd == "rules":
             e = save_rules(a.reports, a.dir, a.start_money, a.label)
         elif a.cmd == "agent":
-            e = save_agent(a.reports, a.dir, a.start_money, a.label)
+            e = save_agent(a.reports, a.dir, a.start_money, a.label, a.partial)
         elif a.cmd == "compare":
-            e = save_comparison(a.reports, a.dir, a.rules_dir, a.start_money, a.label)
+            e = save_comparison(a.reports, a.dir, a.rules_dir, a.start_money, a.label, a.partial)
+        elif a.cmd == "note":
+            add_note(a.reports, a.file, a.text)
+            print(write_index(a.reports))
+            return 0
         else:
             print(write_index(a.reports))
             return 0

@@ -10,7 +10,8 @@ a hand-played replay, and this code enforces it:
      ends) and a rewritten notebook. That answer is written to the replay's tamper-evident ledger BEFORE any bar
      of week k reaches it.
   2. During week k, once per day after the day's first DECISION_BAR bars, it decides: hold to the close (1) or
-     stay in cash (0). It sees its notebook, its weekly forecast and the bars up to that moment, nothing later.
+     stay in cash (0). In an --overnight run it decides instead hold (1) or cash (0) until its next decision, the
+     next trading day after DECISION_BAR bars, so a held position stays open overnight and over weekends. It sees its notebook, its weekly forecast and the bars up to that moment, nothing later.
      The order fills at the next bar's open; costs are charged like for every rule; the position is closed at the
      day's close.
   3. After week k the week is scored with the same backtester and costs as the hand-played rules, and the result
@@ -26,7 +27,7 @@ A rerun reads every answer from the ledger and pays nothing, so an interrupted r
 where it stopped. The comparison criteria are written in the lock, before anything runs.
 
     python3 weekly.py lock    --dir D --model claude-haiku-5-5 --budget-usd 2 [--first-week 2 --last-week 64]
-                              [--notebook-from OLD/memory/notebook.md]
+                              [--notebook-from OLD/memory/notebook.md] [--overnight]
     python3 weekly.py run     --dir D
     python3 weekly.py status  --dir D
     python3 weekly.py memory  --dir D                  # rewrite the files in D/memory from the ledgers
@@ -84,10 +85,43 @@ DAY_INSTRUCTIONS = (
 )
 
 
-def context_hash():
+WEEK_INSTRUCTIONS_OVERNIGHT = (
+    "You are trading one stock, day by day, to learn whether you can make money after costs. The data is "
+    "anonymized: you are not told which stock or which dates, and prices are shown only as moves in basis points "
+    "(1 bp = 0.01%). Each trading day, after the day's first two hourly bars, you decide whether to hold the stock "
+    "or be in cash until your next decision, which comes the next trading day after its first two bars. Holding "
+    "means you keep the stock overnight (and over the weekend after the last day of a week), so you get the moves "
+    "between one day's close and the next day's open as well. You cannot short. Buying and selling each cost the "
+    "amount stated below; keeping what you already have costs nothing. Before each week you write a forecast and "
+    "rewrite your notebook. The notebook is your only memory from week to week: keep in it what you learned, which "
+    "kinds of choices worked and which failed, and the rules you want to follow; drop what turned out wrong. Being "
+    "in cash is a valid choice."
+)
+
+DAY_INSTRUCTIONS_OVERNIGHT = (
+    "You are trading one anonymized stock, day by day, to learn whether you can make money after costs. Decide what "
+    "to have until your next decision (the next trading day, after its first two bars): hold the stock (1), kept "
+    "overnight, or be in cash (0). Buying or selling costs one trade side each; keeping what you have costs "
+    "nothing. You cannot short. Use your notebook and your forecast for this week, written by you before the week "
+    "began."
+)
+
+
+def _texts(overnight):
+    return ((WEEK_INSTRUCTIONS_OVERNIGHT, DAY_INSTRUCTIONS_OVERNIGHT) if overnight
+            else (WEEK_INSTRUCTIONS, DAY_INSTRUCTIONS))
+
+
+def _overnight(lk):
+    return bool(lk and lk.get("overnight"))
+
+
+def context_hash(overnight=False):
     """Everything that shapes the agent's answers besides the model and the bars."""
     text = "\n".join([WEEK_VERSION, WEEK_INSTRUCTIONS, DAY_INSTRUCTIONS, agent.instructions_hash(),
                       str(agent.DECISION_BAR), str(NOTEBOOK_MAX), str(RECORD_WEEKS)])
+    if overnight:
+        text += "\novernight\n" + WEEK_INSTRUCTIONS_OVERNIGHT + "\n" + DAY_INSTRUCTIONS_OVERNIGHT
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
@@ -150,9 +184,9 @@ def _pct(x, d=2):
 
 # ---------- what the model is shown ----------
 
-def week_prompt(plan, blind, weeks, week, notebook, results):
+def week_prompt(plan, blind, weeks, week, notebook, results, overnight=False):
     side = agent.per_side_bps(plan["costs"])
-    lines = [WEEK_INSTRUCTIONS, "", "Cost of one trade side: %.1f bps." % side, "",
+    lines = [_texts(overnight)[0], "", "Cost of one trade side: %.1f bps." % side, "",
              "The stock so far, one line per week (week 1 is the first week of the data):"]
     for k in range(1, week):
         a, b = weeks[k - 1]
@@ -204,9 +238,10 @@ def week_prompt(plan, blind, weeks, week, notebook, results):
                 if d.get("position") is None:
                     lines.append("Day %d: no decision (the day was too short)." % d["day"])
                     continue
-                lines.append("Day %d: %s. Your reason: %s. From your entry price to the close the stock moved %+.0f "
+                lines.append("Day %d: %s. Your reason: %s. From your entry price to %s the stock moved %+.0f "
                              "bps; %s"
                              % (d["day"], "held" if d["position"] else "stayed in cash", d["reason"] or "-",
+                                "your next decision" if overnight else "the close",
                                 d["move_bps"], ("your result %+.0f bps after costs, %s." %
                                                 (d["result_bps"], "right" if d["right"] else "wrong")) if d["position"]
                                 else ("holding would have given %+.0f bps after costs, so staying out was %s."
@@ -220,9 +255,12 @@ def week_prompt(plan, blind, weeks, week, notebook, results):
     return "\n".join(lines)
 
 
-def day_prompt(hist, side, forecast):
+def day_prompt(hist, side, forecast, overnight=False, holding=False):
     body = agent.prompt_for(hist, side).split("\n", 1)[1]
-    return "\n".join([DAY_INSTRUCTIONS, "", "Your notebook:", forecast["notebook"] or "(empty)", "",
+    if overnight:
+        body = ("You hold the stock now (kept from your last decision)." if holding
+                else "You are in cash now.") + "\n" + body
+    return "\n".join([_texts(overnight)[1], "", "Your notebook:", forecast["notebook"] or "(empty)", "",
                       "Your forecast for this week: your net return %s, the stock %s. Your plan: %s"
                       % (_pct(forecast["expect_return"]), forecast["expect_market"], forecast["plan"] or "-"),
                       body])
@@ -235,7 +273,8 @@ def _lock(entries):
     return locks[0] if locks else None
 
 
-def lock(folder, model, budget, first_week=2, last_week=None, notebook_from=None, seed=1, criteria=None):
+def lock(folder, model, budget, first_week=2, last_week=None, notebook_from=None, seed=1, criteria=None,
+         overnight=False):
     plan, blind, weeks, entries = replay._open(folder)
     if _lock(entries):
         raise ValueError("this folder already has an agent run locked; use a new replay folder for a new run")
@@ -259,7 +298,8 @@ def lock(folder, model, budget, first_week=2, last_week=None, notebook_from=None
         raise ValueError("criteria keys are %s" % sorted(judge.DEFAULT_CRITERIA))
     return T.ledger_append(folder, {
         "kind": "agent_week_lock", "model": model, "budget": float(budget), "first_week": first_week,
-        "last_week": last, "context_hash": context_hash(), "request": agent.request_settings(),
+        "last_week": last, "context_hash": context_hash(overnight), "overnight": bool(overnight),
+        "request": agent.request_settings(),
         "decision_bar": agent.DECISION_BAR, "notebook_start": notebook,
         "notebook_start_from": os.path.basename(notebook_from) if notebook_from else None,
         "seed": seed, "criteria": crit})
@@ -305,7 +345,7 @@ def _week_index(weeks, n):
     return out
 
 
-def _day_strategy(asker, side, week_of, forecasts, record):
+def _day_strategy(asker, side, week_of, forecasts, record, overnight=False):
     state = {"day": None, "pos": 0}
 
     def strategy(hist, position):
@@ -319,11 +359,14 @@ def _day_strategy(asker, side, week_of, forecasts, record):
         while k < n and hist[i - k]["t"][:10] == day:
             k += 1
         if day != state["day"]:
-            state["day"], state["pos"] = day, 0
+            state["day"] = day
+            if not overnight:
+                state["pos"] = 0
         if k < agent.DECISION_BAR:
-            return 0
+            return state["pos"] if overnight else 0
         if k == agent.DECISION_BAR:
-            e = asker.ask(day_prompt(hist, side, forecasts[w]), "day_decision", parse_day, {"position": 0})
+            e = asker.ask(day_prompt(hist, side, forecasts[w], overnight, state["pos"] == 1), "day_decision",
+                          parse_day, {"position": state["pos"] if overnight else 0})
             state["pos"] = e["position"]
             record[i - agent.DECISION_BAR + 1] = (i, e)
         return state["pos"]
@@ -331,11 +374,13 @@ def _day_strategy(asker, side, week_of, forecasts, record):
     return strategy
 
 
-def _score_week(plan, blind, weeks, w, strategy, record):
+def _score_week(plan, blind, weeks, w, strategy, record, overnight=False):
     a, b = weeks[w - 1]
     costs = plan["costs"]
-    head = replay._score_fn(plan, blind, a, b, strategy)
+    head = replay._score_fn(plan, blind, a, b, strategy, flatten_eod=not overnight)
     side = agent.per_side_bps(costs)
+    if overnight:
+        return head, _overnight_days(blind, a, b, record, side)
     run = engine.backtest(blind[:b], strategy, costs, capital=replay.CAPITAL, flatten_eod=True)
     by_day = {t["entry_t"][:10]: t for t in run["trades"] if t["entry_t"] >= blind[a]["t"]}
     days = []
@@ -357,13 +402,47 @@ def _score_week(plan, blind, weeks, w, strategy, record):
     return head, days
 
 
+HOLD_TEXT = {False: "held to the close",
+             True: "holds or stays in cash until its next decision, so it can keep the stock overnight"}
+
+
+def _overnight_days(blind, a, b, record, side):
+    """Per-day detail when positions are kept overnight. A day's span runs from its entry (the bar after the
+    decision) to the next decision's entry, or to the week's last close. Costs are charged only when the position
+    changes. The week's result itself always comes from the backtester; this is the readable breakdown."""
+    before = [k for k in record if k < a]
+    prev = record[max(before)][1]["position"] if before else 0
+    spans = _days(blind, a, b)
+    entries = [(n, s, record.get(s)) for n, (s, e) in enumerate(spans, 1)]
+    out = []
+    for j, (n, s, rec) in enumerate(entries):
+        if rec is None:
+            out.append({"day": n, "position": None, "reason": "", "failed": False})
+            continue
+        i_dec, ans = rec
+        entry = min(i_dec + 1, b - 1)
+        nxt = next((r[0] + 1 for _, _, r in entries[j + 1:] if r is not None), None)
+        end = blind[nxt]["o"] if nxt is not None and nxt < b else blind[b - 1]["c"]
+        move = _bps(end, blind[entry]["o"])
+        pos = ans["position"]
+        hold_would = move - (side if prev == 0 else 0.0)
+        result = (move - (side if prev == 0 else 0.0)) if pos else (-side if prev == 1 else 0.0)
+        right = (result > 0) if pos else (hold_would <= 0)
+        out.append({"day": n, "position": pos, "reason": ans.get("reason", ""), "failed": ans["failed"],
+                    "decided_at": i_dec, "move_bps": move, "hold_would_bps": hold_would, "result_bps": result,
+                    "right": right, "kept_from_before": prev})
+        prev = pos
+    return out
+
+
 def run(folder, client, log=None):
     plan, blind, weeks, entries = replay._open(folder)
     lk = _lock(entries)
     if not lk:
         raise ValueError("no agent run is locked here; run `lock` first so the model, weeks, budget and criteria "
                          "are fixed before anything runs")
-    if lk["context_hash"] != context_hash():
+    overnight = _overnight(lk)
+    if lk["context_hash"] != context_hash(overnight):
         raise ValueError("the agent's instructions or request settings changed after the lock; use a new folder")
     side = agent.per_side_bps(plan["costs"])
     asker = agent.Asker(os.path.join(folder, "agent"), client, lk["model"], _budget(entries))
@@ -374,7 +453,8 @@ def run(folder, client, log=None):
         if w not in forecasts:
             prev = [forecasts[k] for k in sorted(forecasts) if k < w]
             notebook = prev[-1]["notebook"] if prev else lk["notebook_start"]
-            ans = asker.ask(week_prompt(plan, blind, weeks, w, notebook, results), "week_forecast", parse_week,
+            ans = asker.ask(week_prompt(plan, blind, weeks, w, notebook, results, overnight), "week_forecast",
+                            parse_week,
                             {"expect_return": 0.0, "expect_market": "up", "notebook": notebook})
             forecasts[w] = T.ledger_append(folder, {
                 "kind": "agent_week_forecast", "week": w, "expect_return": ans["expect_return"],
@@ -382,8 +462,9 @@ def run(folder, client, log=None):
                 "failed": ans["failed"], "answer_key": ans["key"]})
         if w not in results:
             record = {}
-            head, days = _score_week(plan, blind, weeks, w, _day_strategy(asker, side, week_of, forecasts, record),
-                                     record)
+            head, days = _score_week(plan, blind, weeks, w,
+                                     _day_strategy(asker, side, week_of, forecasts, record, overnight), record,
+                                     overnight)
             a, b = weeks[w - 1]
             stock_move = blind[b - 1]["c"] / blind[a - 1]["c"] - 1.0
             f = forecasts[w]
@@ -485,15 +566,18 @@ def write_memory(folder):
 
 # ---------- numbers for the pages ----------
 
-def _positions_strategy(days_by_index):
-    """Replays the logged daily choices without asking the model: {decision bar index: position}."""
+def _positions_strategy(days_by_index, overnight=False):
+    """Replays the logged daily choices without asking the model: {decision bar index: position}. Make a new one
+    for every backtest: it keeps state."""
     state = {"day": None, "pos": 0}
 
     def strategy(hist, position):
         i = len(hist) - 1
         day = hist[i]["t"][:10]
         if day != state["day"]:
-            state["day"], state["pos"] = day, 0
+            state["day"] = day
+            if not overnight:
+                state["pos"] = 0
         if i in days_by_index:
             state["pos"] = days_by_index[i]
         return state["pos"]
@@ -501,13 +585,26 @@ def _positions_strategy(days_by_index):
     return strategy
 
 
-def _rescore_agent(plan, blind, weeks, rows, costs):
+def _decisions(rows):
+    return {d["decided_at"]: d["position"] for r in rows for d in r["days"] if d.get("position") is not None}
+
+
+def _fn_for_row(rows, overnight):
+    """Decision function for scoring one week again. Overnight, earlier weeks' choices matter (a position can be
+    carried into the week), so every logged choice is replayed; otherwise only that week's."""
+    if overnight:
+        every = _decisions(rows)
+        return lambda r: _positions_strategy(every, True)
+    return lambda r: _positions_strategy(_decisions([r]))
+
+
+def _rescore_agent(plan, blind, weeks, rows, costs, overnight=False):
     p = dict(plan, costs=costs)
     total = 1.0
+    fn_for = _fn_for_row(rows, overnight)
     for r in rows:
         a, b = weeks[r["week"] - 1]
-        fn = _positions_strategy({d["decided_at"]: d["position"] for d in r["days"] if d.get("position") is not None})
-        total *= 1.0 + replay._score_fn(p, blind, a, b, fn)["strategy_return"]
+        total *= 1.0 + replay._score_fn(p, blind, a, b, fn_for(r), flatten_eod=not overnight)["strategy_return"]
     return total - 1.0
 
 
@@ -515,8 +612,9 @@ def agent_money(folder, d, start):
     """Money for the agent run and for holding, starting from `start` (euro), along the real path."""
     report.check_start_money(d["costs"], start)
     plan, blind, weeks, _ = replay._open(folder)
-    end, paid = report.money_path(plan, blind, weeks, d["rows"], start, lambda r: _positions_strategy(
-        {x["decided_at"]: x["position"] for x in r["days"] if x.get("position") is not None}))
+    overnight = _overnight(d["lock"])
+    end, paid = report.money_path(plan, blind, weeks, d["rows"], start, _fn_for_row(d["rows"], overnight),
+                                  flatten_eod=not overnight)
     return {"start": float(start), "agent_end": end, "agent_costs": paid,
             "stock_end": start * (1.0 + d["stock_total"]),
             "hold_costs": start * 2 * report.per_side_bps(d["costs"]) / 1e4}
@@ -541,7 +639,7 @@ def build(folder):
     out = [d for r in rows for d in r["days"] if d.get("position") == 0]
     spent = sum(e.get("cost", 0.0) for e in T.ledger_read(os.path.join(folder, "agent")))
     sens = [{"label": text, "per_side_bps": report.per_side_bps(c),
-             "total_return": _rescore_agent(plan, blind, weeks, rows, c)} for _, text, c in report.scenarios(plan["costs"])]
+             "total_return": _rescore_agent(plan, blind, weeks, rows, c, _overnight(lk))} for _, text, c in report.scenarios(plan["costs"])]
     return {
         "rows": rows, "forecasts": fc, "lock": lk, "costs": plan["costs"], "cum": cum, "cum_stock": cum_stock,
         "agent_total": cum[-1], "stock_total": cum_stock[-1], "n": n, "spent": spent,
@@ -763,11 +861,12 @@ def render_agent(d, label="", start_money=None):
     c = d["costs"]
     p.append("<h2>Limits</h2><ul><li>Costs used: commission %.1f bps, spread %.1f bps, slippage %.1f bps, fixed fee "
              "%.2f. Confirm them against the broker's price list.</li><li>One decision per day, after the first two "
-             "bars, held to the close; the rules in the hand run could trade several times a day.</li><li>The model "
+             "bars, %s; the rules in the hand run could trade several times a day and always sold by the close.</li><li>The model "
              "may remember the real period despite the hidden names and dates; past data is practice.</li><li>One "
              "stock, one stretch: luck and skill cannot be told apart from this alone.</li><li>The stock's name, "
              "the dates and the source file are not shown.</li></ul>" % (
-                 c["commission_bps"], c["spread_bps"], c["slippage_bps"], c["fixed_fee"]))
+                 c["commission_bps"], c["spread_bps"], c["slippage_bps"], c["fixed_fee"],
+                 HOLD_TEXT[_overnight(d["lock"])]))
     p.append("<h2>All weeks</h2><div class=\"scroll\"><table><tr><th>Week</th><th>Expected</th><th>Result</th>"
              "<th>Miss</th><th>Stock</th><th>Direction</th><th>Days held</th><th class=\"l\">Plan</th></tr>")
     for r in rows:
@@ -917,10 +1016,11 @@ def render_compare(c, label=""):
     p.append("</table></div>")
     p.append("<h2>Fair-comparison notes</h2><ul><li>The rules were chosen by Claude by hand, the agent run used %s "
              "through the API; both saw the same anonymized weeks in the same order.</li><li>The rules could trade "
-             "several times a day; the agent decides once a day, after the first two bars, and holds to the close."
-             "</li><li>Holding is the true move of the stock with no costs; staying out is 0.</li><li>Past data is "
+             "several times a day and always sold by the close; the agent decides once a day, after the first two "
+             "bars, and %s.</li><li>Holding is the true move of the stock with no costs; staying out is 0.</li><li>Past data is "
              "practice: either may remember the real period. Only data after the model's knowledge, and paper "
-             "trading, count.</li></ul>" % html.escape(c["agent"]["lock"]["model"]))
+             "trading, count.</li></ul>" % (html.escape(c["agent"]["lock"]["model"]), HOLD_TEXT[
+                 _overnight(c["agent"]["lock"])]))
     p.append("<h2>All weeks</h2><div class=\"scroll\"><table><tr><th>Week</th><th>Agent</th><th>Rules</th>"
              "<th class=\"l\">Rule used</th><th>Stock</th><th>Agent dir.</th><th>Rules dir.</th></tr>")
     for x in rows:
@@ -951,6 +1051,8 @@ def main(argv=None):
     s.add_argument("--last-week", type=int)
     s.add_argument("--notebook-from", help="a notebook.md saved by an earlier run, to start from its lessons")
     s.add_argument("--seed", type=int, default=1)
+    s.add_argument("--overnight", action="store_true",
+                   help="hold or cash until the next decision, so a held position stays open overnight")
     for name in ("run", "status", "memory"):
         x = sub.add_parser(name)
         x.add_argument("--dir", required=True)
@@ -969,8 +1071,10 @@ def main(argv=None):
     a = ap.parse_args(argv)
     try:
         if a.cmd == "lock":
-            e = lock(a.dir, a.model, a.budget, a.first_week, a.last_week, a.notebook_from, a.seed)
-            out = {k: e[k] for k in ("model", "budget", "first_week", "last_week", "criteria", "context_hash")}
+            e = lock(a.dir, a.model, a.budget, a.first_week, a.last_week, a.notebook_from, a.seed,
+                     overnight=a.overnight)
+            out = {k: e[k] for k in ("model", "budget", "first_week", "last_week", "criteria", "context_hash",
+                                     "overnight")}
         elif a.cmd == "run":
             plan, _, _, entries = replay._open(a.dir)
             lk = _lock(entries)

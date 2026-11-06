@@ -230,6 +230,42 @@ class RealClient(unittest.TestCase):
         self.assertIn("401", str(cm.exception))
         self.assertNotIn("sk-test-123", str(cm.exception))
 
+    def test_a_network_timeout_is_tried_again_after_a_wait(self):
+        waits = []
+        with mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test-123"}):
+            c = agent.AnthropicClient(MODEL, sleep=waits.append)
+            with mock.patch.object(agent.urllib.request, "urlopen",
+                                   side_effect=[TimeoutError("The read operation timed out"), self.reply()]):
+                text, usage, stop = c("hi")
+        self.assertEqual(waits, [agent.AnthropicClient.RETRY_WAITS[0]])
+        self.assertTrue(text)
+
+    def test_overloaded_is_retried_but_a_bad_request_is_not(self):
+        import urllib.error
+
+        def err(code):
+            return urllib.error.HTTPError("https://x", code, "x", {}, io.BytesIO(b"{}"))
+        with mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test-123"}):
+            waits = []
+            c = agent.AnthropicClient(MODEL, sleep=waits.append)
+            with mock.patch.object(agent.urllib.request, "urlopen", side_effect=[err(529), err(429), self.reply()]):
+                c("hi")
+            self.assertEqual(len(waits), 2)
+            waits.clear()
+            with mock.patch.object(agent.urllib.request, "urlopen", side_effect=[err(400)]):
+                with self.assertRaisesRegex(ValueError, "400"):
+                    c("hi")
+            self.assertEqual(waits, [])
+
+    def test_it_gives_up_after_the_last_wait(self):
+        waits = []
+        with mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test-123"}):
+            c = agent.AnthropicClient(MODEL, sleep=waits.append)
+            with mock.patch.object(agent.urllib.request, "urlopen", side_effect=OSError("down")):
+                with self.assertRaisesRegex(ValueError, "could not reach"):
+                    c("hi")
+        self.assertEqual(waits, list(agent.AnthropicClient.RETRY_WAITS))
+
 
 class Judge(Env):
     def setUp(self):

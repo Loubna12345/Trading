@@ -159,13 +159,13 @@ def check_start_money(costs, start):
                          "scaled to %s; re-score with that account size instead" % eur(start))
 
 
-def money_path(plan, blind, weeks, rows, start, fn_for_row):
+def money_path(plan, blind, weeks, rows, start, fn_for_row, flatten_eod=True):
     """(end value, costs paid) for `start` money following the weekly results in order. Every cost is a share of
     the trade (no fixed fee), so each week's costs are that week's share of its starting value."""
     value, paid = float(start), 0.0
     for r in rows:
         a, b = weeks[r["week"] - 1]
-        s = replay._score_fn(plan, blind, a, b, fn_for_row(r))
+        s = replay._score_fn(plan, blind, a, b, fn_for_row(r), flatten_eod=flatten_eod)
         paid += value * s["costs_paid"] / s["start_equity"]
         value *= 1.0 + s["strategy_return"]
     return value, paid

@@ -30,6 +30,7 @@ import importlib.util
 import json
 import os
 import urllib.error
+import time
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -197,10 +198,16 @@ def parse_answer(text):
 
 # ---------- the model behind the key ----------
 
+class _Retryable(Exception):
+    """A failure worth trying again: network trouble, a timeout, rate limiting or a server error."""
+
+
 class AnthropicClient:
     """Callable prompt -> (text, usage, stop_reason). The key is read once from the environment and kept private."""
 
-    def __init__(self, model, max_tokens=None, effort=None, timeout=300):
+    RETRY_WAITS = (10, 30, 90)      # seconds before each new try after a network error, 429 or 5xx
+
+    def __init__(self, model, max_tokens=None, effort=None, timeout=300, sleep=None):
         key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
         if not key:
             raise ValueError("ANTHROPIC_API_KEY is not set on this computer. Set it in your own terminal "
@@ -210,11 +217,24 @@ class AnthropicClient:
         self.max_tokens = MAX_TOKENS if max_tokens is None else max_tokens
         self.effort = EFFORT if effort is None else effort
         self._key = key
+        self._sleep = sleep or time.sleep
 
     def __repr__(self):
         return "AnthropicClient(model=%r)" % self.model
 
     def __call__(self, prompt):
+        """One answer. A network error, a timeout, a 429 or a 5xx is tried again after a wait (RETRY_WAITS); any
+        other error, or the last failure, is raised. A timed-out request may still have been billed by the API
+        without an answer coming back; such a cost cannot be seen here and is not in the ledger."""
+        for wait in self.RETRY_WAITS + (None,):
+            try:
+                return self._once(prompt)
+            except _Retryable as e:
+                if wait is None:
+                    raise ValueError(str(e))
+                self._sleep(wait)
+
+    def _once(self, prompt):
         body = json.dumps({"model": self.model, "max_tokens": self.max_tokens,
                            "output_config": {"effort": self.effort},
                            "messages": [{"role": "user", "content": prompt}]}).encode("utf-8")
@@ -231,9 +251,12 @@ class AnthropicClient:
                 detail = e.read(400).decode("utf-8", "replace")
             except Exception:
                 pass
-            raise ValueError(self._clean("Anthropic API error %s: %s" % (e.code, detail)))
+            msg = self._clean("Anthropic API error %s: %s" % (e.code, detail))
+            if e.code == 429 or e.code >= 500:
+                raise _Retryable(msg)
+            raise ValueError(msg)
         except (urllib.error.URLError, OSError) as e:
-            raise ValueError(self._clean("could not reach the Anthropic API: %s" % e))
+            raise _Retryable(self._clean("could not reach the Anthropic API: %s" % e))
         # Thinking blocks are skipped: only the text blocks hold the answer. Thinking is included in output_tokens.
         text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
         usage = data.get("usage") or {}
