@@ -6,7 +6,7 @@ description: >-
   revealed and the rule scored with costs, and the last third of the weeks stays sealed for one final test per
   rule. Use when the user says "replay the data", "week by week", "use the past as live training", "test my
   assumptions on week 1 then week 2", or wants practice predictions that are logged before the answer.
-argument-hint: "[start|show|predict|reveal|final|status]"
+argument-hint: "[start|show|predict|reveal|final|status|relocate]"
 ---
 
 # trader-replay
@@ -23,6 +23,8 @@ python3 "${CLAUDE_SKILL_DIR}/replay.py" predict --dir trader/replay/a --week 2 -
 python3 "${CLAUDE_SKILL_DIR}/replay.py" reveal --dir trader/replay/a --week 2
 python3 "${CLAUDE_SKILL_DIR}/replay.py" final --dir trader/replay/a --strategy trend --param window=6
 python3 "${CLAUDE_SKILL_DIR}/replay.py" status --dir trader/replay/a
+python3 "${CLAUDE_SKILL_DIR}/replay.py" relocate --dir trader/replay/a --source trader/history/SAP.DE_60m.csv
+    # only when the same data file moved (another computer, a renamed folder); checked by SHA-256, logged
 python3 "${CLAUDE_SKILL_DIR}/report.py" --dir trader/replay/a --out report.html --label "Dry run, placeholder costs"
 ```
 

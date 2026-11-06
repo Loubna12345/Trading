@@ -25,6 +25,7 @@ Commands:
   reveal  --dir D --week K
   final   --dir D --strategy NAME --param key=value ...
   status  --dir D
+  relocate --dir D --source PATH   (the same data file in a new place; checked by SHA-256 and logged)
 """
 
 import argparse
@@ -135,8 +136,8 @@ def start(source, folder, costs, periods_per_year, days_per_week=5, holdout=0.34
             "bars_per_week": len(blind) // len(weeks), "days_per_week": days_per_week}
 
 
-def _open(folder):
-    """(plan, blind bars, weeks, ledger entries) after checking the ledger chain, the plan and the data."""
+def _checked_plan(folder):
+    """(plan, ledger entries) after checking the ledger chain and that the plan is the one logged at start."""
     path = os.path.join(folder, PLAN)
     if not os.path.exists(path) or not os.path.exists(T.ledger_path(folder)):
         raise ValueError("%s holds no replay; run start first" % folder)
@@ -146,9 +147,39 @@ def _open(folder):
         plan = json.load(fh)
     if not entries or entries[0].get("kind") != "start" or entries[0].get("plan_hash") != _plan_hash(plan):
         raise ValueError("the plan was changed after start")
-    if not os.path.exists(plan["source"]) or _sha256_file(plan["source"]) != plan["source_sha256"]:
-        raise ValueError("the source data is missing or changed since start")
-    blind, weeks = anonymize(engine.load_bars_csv(plan["source"]), plan["days_per_week"])
+    return plan, entries
+
+
+def _source(plan, entries):
+    """Where the data is now: the latest `relocate` in the ledger, else the path given at start."""
+    moves = [e["source"] for e in entries if e.get("kind") == "relocate"]
+    return moves[-1] if moves else plan["source"]
+
+
+def relocate(folder, new_source):
+    """Point the replay at the same data file in a new place (another computer, a moved folder). The file must
+    be byte for byte the one used at start (same SHA-256). The plan is not touched; the move is logged."""
+    plan, entries = _checked_plan(folder)
+    new_source = os.path.abspath(new_source)
+    if not os.path.exists(new_source):
+        raise ValueError("no file at %s" % new_source)
+    if _sha256_file(new_source) != plan["source_sha256"]:
+        raise ValueError("%s is not the same data as at start (its SHA-256 differs); a replay cannot switch data"
+                         % new_source)
+    T.ledger_append(folder, {"kind": "relocate", "source": new_source})
+    return {"source": new_source, "sha256": plan["source_sha256"]}
+
+
+def _open(folder):
+    """(plan, blind bars, weeks, ledger entries) after checking the ledger chain, the plan and the data."""
+    plan, entries = _checked_plan(folder)
+    source = _source(plan, entries)
+    if not os.path.exists(source):
+        raise ValueError("the source data is not at %s; if the same file is elsewhere, run relocate --source "
+                         "PATH (it must be byte for byte the file used at start)" % source)
+    if _sha256_file(source) != plan["source_sha256"]:
+        raise ValueError("the source data changed since start")
+    blind, weeks = anonymize(engine.load_bars_csv(source), plan["days_per_week"])
     if len(weeks) != plan["weeks"]:
         raise ValueError("the source data no longer cuts into the same weeks")
     return plan, blind, weeks, entries
@@ -366,6 +397,9 @@ def main(argv=None):
     x.add_argument("--param", action="append")
     x = sub.add_parser("status")
     x.add_argument("--dir", required=True)
+    x = sub.add_parser("relocate")
+    x.add_argument("--dir", required=True)
+    x.add_argument("--source", required=True, help="the same data file, in its new place")
     a = p.parse_args(argv)
     try:
         if a.cmd == "start":
@@ -385,6 +419,8 @@ def main(argv=None):
             print(_csv(show(a.dir, a.week)))
         elif a.cmd == "final":
             print(json.dumps(final(a.dir, a.strategy, _params(a.param)), indent=2))
+        elif a.cmd == "relocate":
+            print(json.dumps(relocate(a.dir, a.source), indent=2))
         else:
             print(json.dumps(status(a.dir), indent=2))
     except ValueError as e:

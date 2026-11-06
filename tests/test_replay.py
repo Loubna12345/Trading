@@ -1,8 +1,10 @@
+import io
 import json
 import os
 import re
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 
 from _load import load
 from test_training import series, write_store
@@ -135,6 +137,60 @@ class Start(Env):
             fh.write("\n")
         with self.assertRaises(ValueError):
             replay.show(self.dir, 1)
+
+
+class Relocate(Env):
+    """A replay started on one computer must keep working when the same data file sits somewhere else."""
+
+    def setUp(self):
+        super().setUp()
+        self.start()
+        self.play_week(2)
+        self.moved = os.path.join(self.root, "elsewhere", "copy.csv")
+        os.makedirs(os.path.dirname(self.moved))
+        os.replace(self.csv, self.moved)
+
+    def test_a_moved_source_is_refused_with_a_pointer_to_relocate(self):
+        with self.assertRaisesRegex(ValueError, "relocate"):
+            replay.status(self.dir)
+
+    def test_relocate_to_the_same_data_keeps_the_replay_going(self):
+        replay.relocate(self.dir, self.moved)
+        st = replay.status(self.dir)
+        self.assertEqual(st["weeks_scored"], 1)
+        self.play_week(3)
+        self.assertEqual(replay.status(self.dir)["weeks_scored"], 2)
+        self.assertEqual(replay.T.ledger_verify(self.dir), len(replay.T.ledger_read(self.dir)))
+
+    def test_relocate_is_logged_and_the_plan_is_not_touched(self):
+        with open(os.path.join(self.dir, replay.PLAN)) as fh:
+            before = fh.read()
+        replay.relocate(self.dir, self.moved)
+        with open(os.path.join(self.dir, replay.PLAN)) as fh:
+            self.assertEqual(fh.read(), before)
+        last = replay.T.ledger_read(self.dir)[-1]
+        self.assertEqual(last["kind"], "relocate")
+        self.assertEqual(last["source"], os.path.abspath(self.moved))
+
+    def test_relocate_to_different_data_is_refused_and_not_logged(self):
+        other = write_store(self.store, "OTHER", series(8, n_days=self.N_DAYS))
+        n = len(replay.T.ledger_read(self.dir))
+        with self.assertRaisesRegex(ValueError, "not the same data"):
+            replay.relocate(self.dir, other)
+        self.assertEqual(len(replay.T.ledger_read(self.dir)), n)
+
+    def test_the_latest_relocation_wins(self):
+        replay.relocate(self.dir, self.moved)
+        again = os.path.join(self.root, "third.csv")
+        os.replace(self.moved, again)
+        replay.relocate(self.dir, again)
+        self.assertEqual(replay.status(self.dir)["weeks_scored"], 1)
+
+    def test_relocate_from_the_command_line(self):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(replay.main(["relocate", "--dir", self.dir, "--source", self.moved]), 0)
+        self.assertEqual(json.loads(out.getvalue())["source"], os.path.abspath(self.moved))
 
 
 class Order(Env):
